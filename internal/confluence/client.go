@@ -149,7 +149,7 @@ func (c *Client) doMultipart(ctx context.Context, method, path string, query url
 	writer := multipart.NewWriter(&buf)
 
 	h := make(textproto.MIMEHeader)
-	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, filename))
+	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename=%q`, filename))
 	if mimeType != "" {
 		h.Set("Content-Type", mimeType)
 	}

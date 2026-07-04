@@ -98,8 +98,10 @@ func (c *Config) validate() error {
 
 	if c.ConfluenceBaseURL == "" {
 		errs = append(errs, "CONFLUENCE_BASE_URL (or --confluence-base-url) is required")
-	} else if _, err := url.Parse(c.ConfluenceBaseURL); err != nil {
+	} else if u, err := url.Parse(c.ConfluenceBaseURL); err != nil {
 		errs = append(errs, fmt.Sprintf("CONFLUENCE_BASE_URL is not a valid URL: %v", err))
+	} else if u.Scheme != "https" || u.Host == "" {
+		errs = append(errs, "CONFLUENCE_BASE_URL must be an absolute https URL")
 	}
 
 	if c.ConfluenceEmail == "" {

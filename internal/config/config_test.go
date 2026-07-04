@@ -79,3 +79,29 @@ func TestLoad_InvalidMode(t *testing.T) {
 		t.Fatal("expected error with invalid mode, got nil")
 	}
 }
+
+func TestLoad_InvalidBaseURL(t *testing.T) {
+	os.Clearenv()
+
+	_, err := Load([]string{
+		"--confluence-base-url=not-a-url",
+		"--confluence-email=test@example.com",
+		"--confluence-api-token=test-token",
+	})
+	if err == nil {
+		t.Fatal("expected error with invalid base URL, got nil")
+	}
+}
+
+func TestLoad_InsecureBaseURL(t *testing.T) {
+	os.Clearenv()
+
+	_, err := Load([]string{
+		"--confluence-base-url=http://test.atlassian.net",
+		"--confluence-email=test@example.com",
+		"--confluence-api-token=test-token",
+	})
+	if err == nil {
+		t.Fatal("expected error with insecure base URL, got nil")
+	}
+}
