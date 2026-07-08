@@ -105,6 +105,29 @@ The server authenticates to Confluence Cloud using [HTTP Basic auth](https://dev
 with your Confluence account email as the username and an [API token](https://id.atlassian.com/manage-profile/security/api-tokens)
 as the password.
 
+### Required token permissions
+
+Atlassian API tokens do not grant more access than the Atlassian account has.
+Use a dedicated account with the smallest Confluence space permissions needed
+for the tools you expose.
+
+You can use either:
+
+- A classic/unscoped API token with `CONFLUENCE_BASE_URL` set to your site URL,
+  e.g. `https://your-domain.atlassian.net`.
+- A scoped API token. Scoped tokens must call the Atlassian API gateway, e.g.
+  `CONFLUENCE_BASE_URL=https://api.atlassian.com/ex/confluence/{cloudId}`.
+
+For scoped tokens, grant these Confluence scopes:
+
+| Mode | Token scopes | Confluence permissions the account still needs |
+| ---- | ------------ | ---------------------------------------------- |
+| `readonly` | `read:page:confluence`, `read:space:confluence`, `read:attachment:confluence` | Confluence product access (`Can use`) and view permission for the spaces/pages/attachments to read. Page restrictions still apply. |
+| `readwrite` | `read:page:confluence`, `read:space:confluence`, `read:attachment:confluence`, `write:page:confluence`, `write:label:confluence`, `write:attachment:confluence`, `delete:page:confluence`, `delete:attachment:confluence` | The readonly permissions, plus only the space permissions required by the write tools you use: add/update/delete pages, add labels, add attachments, and/or delete attachments. |
+
+`confluence-mcp` does not need Confluence admin scopes or space-management
+scopes because it does not create spaces or change space settings.
+
 ## Development
 
 ### Requirements
