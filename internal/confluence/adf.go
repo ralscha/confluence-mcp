@@ -51,3 +51,24 @@ func plainTextToStorage(text string) string {
 
 	return strings.Join(result, "")
 }
+
+func bodyToPlainText(body *PageBody) string {
+	if body == nil {
+		return ""
+	}
+	switch {
+	case body.Storage != nil:
+		return storageToPlainText(body.Storage.Value)
+	case body.View != nil:
+		return storageToPlainText(body.View.Value)
+	case body.AtlasDocFormat != nil:
+		return body.AtlasDocFormat.Value
+	default:
+		return ""
+	}
+}
+
+// PlainText extracts a best-effort plain text version of the body.
+func (b *PageBody) PlainText() string {
+	return bodyToPlainText(b)
+}

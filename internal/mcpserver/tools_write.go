@@ -127,6 +127,96 @@ func addPageLabel(client *confluence.Client) mcp.ToolHandlerFor[AddPageLabelInpu
 	}
 }
 
+// CreateFooterCommentInput is the input for the confluence_create_footer_comment tool.
+type CreateFooterCommentInput struct {
+	PageID          string `json:"page_id,omitempty" jsonschema:"the Confluence page ID for a top-level comment"`
+	ParentCommentID string `json:"parent_comment_id,omitempty" jsonschema:"the parent footer comment ID for a reply"`
+	Content         string `json:"content" jsonschema:"the comment body as plain text or storage format"`
+	BodyType        string `json:"body_type,omitempty" jsonschema:"content format type: storage (default) or atlas_doc_format"`
+}
+
+// CreatedFooterComment describes a newly created footer comment.
+type CreatedFooterComment struct {
+	CommentID string `json:"comment_id" jsonschema:"the ID of the created comment"`
+	PageID    string `json:"page_id,omitempty" jsonschema:"the page ID the comment belongs to"`
+	Version   int    `json:"version,omitempty" jsonschema:"the created comment version number"`
+}
+
+func createFooterComment(client *confluence.Client) mcp.ToolHandlerFor[CreateFooterCommentInput, CreatedFooterComment] {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, in CreateFooterCommentInput) (*mcp.CallToolResult, CreatedFooterComment, error) {
+		comment, err := client.CreateFooterComment(ctx, confluence.CreateFooterCommentInput{
+			PageID:          in.PageID,
+			ParentCommentID: in.ParentCommentID,
+			Body:            in.Content,
+			BodyType:        in.BodyType,
+		})
+		if err != nil {
+			return nil, CreatedFooterComment{}, fmt.Errorf("create footer comment: %w", err)
+		}
+		version := 0
+		if comment.Version != nil {
+			version = comment.Version.Number
+		}
+		return nil, CreatedFooterComment{CommentID: comment.ID, PageID: comment.PageID, Version: version}, nil
+	}
+}
+
+// UpdateFooterCommentInput is the input for the confluence_update_footer_comment tool.
+type UpdateFooterCommentInput struct {
+	CommentID   string `json:"comment_id" jsonschema:"the Confluence footer comment ID to update"`
+	Content     string `json:"content" jsonschema:"new comment body, as plain text or storage format"`
+	BodyType    string `json:"body_type,omitempty" jsonschema:"content format type: storage (default) or atlas_doc_format"`
+	Version     int    `json:"version" jsonschema:"the current version number of the comment (required)"`
+	VersionNote string `json:"version_note,omitempty" jsonschema:"optional version message describing the change"`
+}
+
+// UpdateFooterCommentOutput confirms a footer comment update.
+type UpdateFooterCommentOutput struct {
+	CommentID string `json:"comment_id" jsonschema:"the ID of the updated comment"`
+	Updated   bool   `json:"updated" jsonschema:"whether the update succeeded"`
+	Version   int    `json:"version,omitempty" jsonschema:"the new version number"`
+}
+
+func updateFooterComment(client *confluence.Client) mcp.ToolHandlerFor[UpdateFooterCommentInput, UpdateFooterCommentOutput] {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, in UpdateFooterCommentInput) (*mcp.CallToolResult, UpdateFooterCommentOutput, error) {
+		comment, err := client.UpdateFooterComment(ctx, in.CommentID, confluence.UpdateFooterCommentInput{
+			Body:        in.Content,
+			BodyType:    in.BodyType,
+			Version:     in.Version,
+			VersionNote: in.VersionNote,
+		})
+		if err != nil {
+			return nil, UpdateFooterCommentOutput{}, fmt.Errorf("update footer comment %s: %w", in.CommentID, err)
+		}
+		version := 0
+		if comment.Version != nil {
+			version = comment.Version.Number
+		}
+		return nil, UpdateFooterCommentOutput{CommentID: in.CommentID, Updated: true, Version: version}, nil
+	}
+}
+
+// DeleteFooterCommentInput is the input for the confluence_delete_footer_comment tool.
+type DeleteFooterCommentInput struct {
+	CommentID string `json:"comment_id" jsonschema:"the Confluence footer comment ID to delete"`
+}
+
+// DeleteFooterCommentOutput confirms a footer comment deletion.
+type DeleteFooterCommentOutput struct {
+	CommentID string `json:"comment_id" jsonschema:"the ID of the deleted comment"`
+	Deleted   bool   `json:"deleted" jsonschema:"whether the deletion succeeded"`
+}
+
+func deleteFooterComment(client *confluence.Client) mcp.ToolHandlerFor[DeleteFooterCommentInput, DeleteFooterCommentOutput] {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, in DeleteFooterCommentInput) (*mcp.CallToolResult, DeleteFooterCommentOutput, error) {
+		err := client.DeleteFooterComment(ctx, in.CommentID)
+		if err != nil {
+			return nil, DeleteFooterCommentOutput{}, fmt.Errorf("delete footer comment %s: %w", in.CommentID, err)
+		}
+		return nil, DeleteFooterCommentOutput{CommentID: in.CommentID, Deleted: true}, nil
+	}
+}
+
 // UploadAttachmentInput is the input for the confluence_upload_attachment tool.
 type UploadAttachmentInput struct {
 	PageID     string `json:"page_id" jsonschema:"the Confluence page ID to attach the file to"`
@@ -200,6 +290,23 @@ func registerWriteTools(s *mcp.Server, client *confluence.Client) {
 		Description: "Add a label to a Confluence page",
 		Annotations: nonDestructiveHint,
 	}, addPageLabel(client))
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "confluence_create_footer_comment",
+		Description: "Create a Confluence footer comment or reply",
+		Annotations: nonDestructiveHint,
+	}, createFooterComment(client))
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "confluence_update_footer_comment",
+		Description: "Update the body of a Confluence footer comment",
+		Annotations: nonDestructiveHint,
+	}, updateFooterComment(client))
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "confluence_delete_footer_comment",
+		Description: "Delete a Confluence footer comment",
+	}, deleteFooterComment(client))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "confluence_upload_attachment",

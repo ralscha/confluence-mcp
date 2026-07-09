@@ -49,9 +49,13 @@ Flags take precedence over environment variables.
 | ----------------------------------- | ---------------------------------------------------------- |
 | `confluence_get_page`               | Get a single Confluence page by ID                         |
 | `confluence_search_pages`           | Search Confluence pages with filters and pagination        |
+| `confluence_search_cql`             | Search Confluence content with CQL                         |
 | `confluence_get_space`              | Get a single Confluence space by key or ID                 |
 | `confluence_list_spaces`            | List Confluence spaces with filters and pagination         |
 | `confluence_get_page_labels`        | Get labels attached to a Confluence page                   |
+| `confluence_list_page_comments`     | List footer or inline comments on a page                   |
+| `confluence_get_comment`            | Get a footer or inline comment by ID                       |
+| `confluence_list_comment_children`  | List replies to a footer or inline comment                 |
 | `confluence_get_page_attachments`   | Get attachments on a Confluence page                       |
 | `confluence_download_attachment`    | Download a Confluence attachment's content (base64-encoded)|
 
@@ -63,6 +67,9 @@ Flags take precedence over environment variables.
 | `confluence_update_page`        | Update title and/or content of a page          |
 | `confluence_delete_page`        | Delete a Confluence page                       |
 | `confluence_add_page_label`     | Add a label to a Confluence page               |
+| `confluence_create_footer_comment` | Create a footer comment or reply             |
+| `confluence_update_footer_comment` | Update the body of a footer comment           |
+| `confluence_delete_footer_comment` | Delete a footer comment                       |
 | `confluence_upload_attachment`  | Upload a file attachment to a page             |
 | `confluence_delete_attachment`  | Delete a Confluence attachment                 |
 
@@ -122,8 +129,8 @@ For scoped tokens, grant these Confluence scopes:
 
 | Mode | Token scopes | Confluence permissions the account still needs |
 | ---- | ------------ | ---------------------------------------------- |
-| `readonly` | `read:page:confluence`, `read:space:confluence`, `read:attachment:confluence` | Confluence product access (`Can use`) and view permission for the spaces/pages/attachments to read. Page restrictions still apply. |
-| `readwrite` | `read:page:confluence`, `read:space:confluence`, `read:attachment:confluence`, `write:page:confluence`, `write:label:confluence`, `write:attachment:confluence`, `delete:page:confluence`, `delete:attachment:confluence` | The readonly permissions, plus only the space permissions required by the write tools you use: add/update/delete pages, add labels, add attachments, and/or delete attachments. |
+| `readonly` | `read:page:confluence`, `read:space:confluence`, `read:attachment:confluence`, `read:comment:confluence`, `read:content-details:confluence` | Confluence product access (`Can use`) and view permission for the spaces/pages/comments/attachments to read. Page restrictions still apply. |
+| `readwrite` | `read:page:confluence`, `read:space:confluence`, `read:attachment:confluence`, `read:comment:confluence`, `read:content-details:confluence`, `write:page:confluence`, `write:label:confluence`, `write:attachment:confluence`, `write:comment:confluence`, `delete:page:confluence`, `delete:attachment:confluence`, `delete:comment:confluence` | The readonly permissions, plus only the space permissions required by the write tools you use: add/update/delete pages, add labels, add attachments, add/update/delete comments, and/or delete attachments. |
 
 `confluence-mcp` does not need Confluence admin scopes or space-management
 scopes because it does not create spaces or change space settings.
@@ -199,15 +206,15 @@ Add to `.vscode/mcp.json` (or your user-level `mcp.json`):
 
 ## API Coverage
 
-This server uses the [Confluence Cloud REST API v2](https://developer.atlassian.com/cloud/confluence/rest/v2/intro/).
-It covers a core subset of functionality focused on pages, spaces, labels, and
-attachments.
+This server primarily uses the [Confluence Cloud REST API v2](https://developer.atlassian.com/cloud/confluence/rest/v2/intro/).
+CQL search uses Confluence's REST API v1 search endpoint because that is where
+Confluence exposes advanced search. The server covers a core subset of
+functionality focused on pages, spaces, labels, comments, attachments, and CQL
+search.
 
 Not currently supported:
 - Blog posts
-- Comments
 - Content properties
-- Advanced search with CQL (Confluence Query Language)
 - Space permissions
 - User management
 

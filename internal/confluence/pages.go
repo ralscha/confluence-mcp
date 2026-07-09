@@ -180,8 +180,5 @@ func (c *Client) AddPageLabel(ctx context.Context, pageID, labelName string) err
 
 // StorageToPlainText extracts plain text from a storage format body.
 func (p *Page) StorageToPlainText() string {
-	if p.Body != nil && p.Body.Storage != nil {
-		return storageToPlainText(p.Body.Storage.Value)
-	}
-	return ""
+	return bodyToPlainText(p.Body)
 }

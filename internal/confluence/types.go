@@ -42,10 +42,13 @@ type Page struct {
 
 // Version represents the version information of a page.
 type Version struct {
-	Number  int    `json:"number,omitempty"`
-	Message string `json:"message,omitempty"`
-	When    string `json:"when,omitempty"`
-	By      *User  `json:"by,omitempty"`
+	Number    int    `json:"number,omitempty"`
+	Message   string `json:"message,omitempty"`
+	When      string `json:"when,omitempty"`
+	CreatedAt string `json:"createdAt,omitempty"`
+	MinorEdit bool   `json:"minorEdit,omitempty"`
+	AuthorID  string `json:"authorId,omitempty"`
+	By        *User  `json:"by,omitempty"`
 }
 
 // PageBody holds the content of a page in various formats.
@@ -75,6 +78,90 @@ type PageSearchResult struct {
 // PaginationLinks contains next/prev URLs for paginated results.
 type PaginationLinks struct {
 	Next string `json:"next,omitempty"`
+}
+
+// Comment represents a Confluence footer or inline comment.
+type Comment struct {
+	ID                      string                   `json:"id,omitempty"`
+	Status                  string                   `json:"status,omitempty"`
+	Title                   string                   `json:"title,omitempty"`
+	PageID                  string                   `json:"pageId,omitempty"`
+	BlogPostID              string                   `json:"blogPostId,omitempty"`
+	AttachmentID            string                   `json:"attachmentId,omitempty"`
+	CustomContentID         string                   `json:"customContentId,omitempty"`
+	ParentCommentID         string                   `json:"parentCommentId,omitempty"`
+	Version                 *Version                 `json:"version,omitempty"`
+	Body                    *PageBody                `json:"body,omitempty"`
+	ResolutionStatus        string                   `json:"resolutionStatus,omitempty"`
+	InlineCommentProperties *InlineCommentProperties `json:"properties,omitempty"`
+	Links                   PageLinks                `json:"_links"`
+}
+
+// InlineCommentProperties describes page anchor metadata for inline comments.
+type InlineCommentProperties struct {
+	InlineMarkerRef         string `json:"inlineMarkerRef,omitempty"`
+	InlineOriginalSelection string `json:"inlineOriginalSelection,omitempty"`
+}
+
+// CommentSearchResult is the response body of comment list endpoints.
+type CommentSearchResult struct {
+	Results []Comment       `json:"results"`
+	Links   PaginationLinks `json:"_links"`
+}
+
+// SearchLinks contains pagination and location links returned by CQL search.
+type SearchLinks struct {
+	Next    string `json:"next,omitempty"`
+	Prev    string `json:"prev,omitempty"`
+	Self    string `json:"self,omitempty"`
+	Base    string `json:"base,omitempty"`
+	Context string `json:"context,omitempty"`
+}
+
+// SearchSpace is the subset of a v1 search space result used by the MCP tools.
+type SearchSpace struct {
+	Key    string     `json:"key,omitempty"`
+	Name   string     `json:"name,omitempty"`
+	Type   string     `json:"type,omitempty"`
+	Status string     `json:"status,omitempty"`
+	Links  SpaceLinks `json:"_links"`
+}
+
+// SearchContent is the subset of a v1 search content result used by the MCP tools.
+type SearchContent struct {
+	ID      string       `json:"id,omitempty"`
+	Type    string       `json:"type,omitempty"`
+	Status  string       `json:"status,omitempty"`
+	Title   string       `json:"title,omitempty"`
+	Space   *SearchSpace `json:"space,omitempty"`
+	Version *Version     `json:"version,omitempty"`
+	Body    *PageBody    `json:"body,omitempty"`
+	Links   PageLinks    `json:"_links"`
+}
+
+// ContentSearchItem represents a single CQL search hit.
+type ContentSearchItem struct {
+	Content              *SearchContent `json:"content,omitempty"`
+	Title                string         `json:"title,omitempty"`
+	Excerpt              string         `json:"excerpt,omitempty"`
+	URL                  string         `json:"url,omitempty"`
+	EntityType           string         `json:"entityType,omitempty"`
+	LastModified         string         `json:"lastModified,omitempty"`
+	FriendlyLastModified string         `json:"friendlyLastModified,omitempty"`
+	Score                float64        `json:"score,omitempty"`
+}
+
+// ContentSearchResult is the response body of GET /wiki/rest/api/search.
+type ContentSearchResult struct {
+	Results             []ContentSearchItem `json:"results"`
+	Start               int                 `json:"start,omitempty"`
+	Limit               int                 `json:"limit,omitempty"`
+	Size                int                 `json:"size,omitempty"`
+	TotalSize           int                 `json:"totalSize,omitempty"`
+	CQLQuery            string              `json:"cqlQuery,omitempty"`
+	SearchDuration      int                 `json:"searchDuration,omitempty"`
+	ArchivedResultCount int                 `json:"archivedResultCount,omitempty"`
+	Links               SearchLinks         `json:"_links"`
 }
 
 // Label represents a Confluence label.
