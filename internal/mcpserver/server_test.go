@@ -97,13 +97,21 @@ func toolNames(t *testing.T, server *mcp.Server) map[string]bool {
 	if err != nil {
 		t.Fatalf("server connect failed: %v", err)
 	}
-	defer serverSession.Close()
+	defer func() {
+		if err := serverSession.Close(); err != nil {
+			t.Errorf("server session close failed: %v", err)
+		}
+	}()
 
 	clientSession, err := client.Connect(ctx, clientTransport, nil)
 	if err != nil {
 		t.Fatalf("client connect failed: %v", err)
 	}
-	defer clientSession.Close()
+	defer func() {
+		if err := clientSession.Close(); err != nil {
+			t.Errorf("client session close failed: %v", err)
+		}
+	}()
 
 	result, err := clientSession.ListTools(ctx, nil)
 	if err != nil {
