@@ -24,6 +24,30 @@ type Client struct {
 	token      string
 }
 
+const (
+	// maxResponseBytes caps JSON response bodies so that an unexpected or
+	// hostile response cannot exhaust memory.
+	maxResponseBytes = 4 << 20
+
+	// maxAttachmentBytes caps attachment downloads. Attachment content is
+	// base64-encoded into a tool result, so oversized files are rejected
+	// rather than returned to the MCP client.
+	maxAttachmentBytes = 8 << 20
+)
+
+// readLimited reads at most limit bytes from r and reports an error if the
+// payload is larger than the limit.
+func readLimited(r io.Reader, limit int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("confluence: response body exceeds the %d byte limit", limit)
+	}
+	return data, nil
+}
+
 // NewClient creates a Client for the given Confluence Cloud base URL (e.g.
 // "https://your-domain.atlassian.net"). If httpClient is nil,
 // http.DefaultClient is used.
@@ -84,7 +108,7 @@ func (c *Client) doJSON(ctx context.Context, method, path string, query url.Valu
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := readLimited(resp.Body, maxResponseBytes)
 	if err != nil {
 		return fmt.Errorf("confluence: reading response body: %w", err)
 	}
@@ -178,7 +202,7 @@ func (c *Client) doMultipart(ctx context.Context, method, path string, query url
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := readLimited(resp.Body, maxResponseBytes)
 	if err != nil {
 		return fmt.Errorf("confluence: reading response body: %w", err)
 	}

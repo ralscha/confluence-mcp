@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -25,6 +26,9 @@ func TestLoad_ValidConfig(t *testing.T) {
 	}
 	if cfg.Transport != TransportStdio {
 		t.Errorf("expected default transport stdio, got %s", cfg.Transport)
+	}
+	if cfg.HTTPAddr != DefaultHTTPAddr {
+		t.Errorf("expected default HTTP address %s, got %s", DefaultHTTPAddr, cfg.HTTPAddr)
 	}
 }
 
@@ -103,5 +107,72 @@ func TestLoad_InsecureBaseURL(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error with insecure base URL, got nil")
+	}
+}
+
+func TestLoad_VersionRequested(t *testing.T) {
+	os.Clearenv()
+
+	_, err := Load([]string{"--version"})
+	if !errors.Is(err, ErrVersionRequested) {
+		t.Fatalf("expected ErrVersionRequested, got %v", err)
+	}
+}
+
+func TestLoad_AllowedOrigins(t *testing.T) {
+	os.Clearenv()
+	_ = os.Setenv("MCP_ALLOWED_ORIGINS", "https://a.example.com, ,https://b.example.com")
+
+	cfg, err := Load([]string{
+		"--confluence-base-url=https://test.atlassian.net",
+		"--confluence-email=test@example.com",
+		"--confluence-api-token=test-token",
+		"--transport=http",
+	})
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	want := []string{"https://a.example.com", "https://b.example.com"}
+	if len(cfg.AllowedOrigins) != len(want) {
+		t.Fatalf("allowed origins = %v, want %v", cfg.AllowedOrigins, want)
+	}
+	for i, origin := range want {
+		if cfg.AllowedOrigins[i] != origin {
+			t.Errorf("allowed origin %d = %q, want %q", i, cfg.AllowedOrigins[i], origin)
+		}
+	}
+}
+
+func TestLoad_InvalidAllowedOrigin(t *testing.T) {
+	os.Clearenv()
+
+	_, err := Load([]string{
+		"--confluence-base-url=https://test.atlassian.net",
+		"--confluence-email=test@example.com",
+		"--confluence-api-token=test-token",
+		"--transport=http",
+		"--allowed-origins=example.com",
+	})
+	if err == nil {
+		t.Fatal("expected error with a non-absolute allowed origin, got nil")
+	}
+	if !strings.Contains(err.Error(), "allowed origin") {
+		t.Errorf("error should mention the allowed origin: %v", err)
+	}
+}
+
+func TestLoad_InvalidHTTPAddr(t *testing.T) {
+	os.Clearenv()
+
+	_, err := Load([]string{
+		"--confluence-base-url=https://test.atlassian.net",
+		"--confluence-email=test@example.com",
+		"--confluence-api-token=test-token",
+		"--transport=http",
+		"--http-addr=8080",
+	})
+	if err == nil {
+		t.Fatal("expected error with an address that has no port, got nil")
 	}
 }

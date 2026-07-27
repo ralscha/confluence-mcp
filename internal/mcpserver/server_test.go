@@ -35,6 +35,9 @@ func TestNewServer_ReadOnly(t *testing.T) {
 	tools := toolNames(t, server)
 	for _, name := range []string{
 		"confluence_search_cql",
+		"confluence_get_page_children",
+		"confluence_get_page_ancestors",
+		"confluence_get_space_pages",
 		"confluence_list_page_comments",
 		"confluence_get_comment",
 		"confluence_list_comment_children",

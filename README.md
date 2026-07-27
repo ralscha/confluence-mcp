@@ -39,7 +39,10 @@ Flags take precedence over environment variables.
 | `CONFLUENCE_API_TOKEN`     | `--confluence-api-token`   | *(required)* | Confluence API token                                 |
 | `CONFLUENCE_MODE`          | `--mode`                   | `readonly`   | `readonly` or `readwrite`                            |
 | `MCP_TRANSPORT`            | `--transport`              | `stdio`      | `stdio` or `http`                                    |
-| `MCP_HTTP_ADDR`            | `--http-addr`              | `:8080`      | Listen address when `--transport=http`               |
+| `MCP_HTTP_ADDR`            | `--http-addr`              | `127.0.0.1:8080` | Listen address when `--transport=http`           |
+| `MCP_ALLOWED_ORIGINS`      | `--allowed-origins`        | *(empty)*    | Comma-separated browser origins allowed to call the HTTP transport |
+
+Run `confluence-mcp --version` to print the build version.
 
 ## Tools
 
@@ -49,6 +52,9 @@ Flags take precedence over environment variables.
 | ----------------------------------- | ---------------------------------------------------------- |
 | `confluence_get_page`               | Get a single Confluence page by ID                         |
 | `confluence_search_pages`           | Search Confluence pages with filters and pagination        |
+| `confluence_get_page_children`      | List the direct child pages of a page                      |
+| `confluence_get_page_ancestors`     | List a page's ancestors, from the root downwards           |
+| `confluence_get_space_pages`        | List the pages in a space                                  |
 | `confluence_search_cql`             | Search Confluence content with CQL                         |
 | `confluence_get_space`              | Get a single Confluence space by key or ID                 |
 | `confluence_list_spaces`            | List Confluence spaces with filters and pagination         |
@@ -99,12 +105,30 @@ The server exposes a [streamable HTTP](https://modelcontextprotocol.io/specifica
 endpoint on the configured address.
 
 ```bash
-confluence-mcp --transport=http --http-addr=:8080
+confluence-mcp --transport=http --http-addr=127.0.0.1:8080
 ```
 
-The HTTP transport has **no built-in authentication**. When running in
-`readwrite` mode, secure it at the network or deployment layer (reverse proxy,
-firewall, loopback-only binding) to prevent unauthorized page modifications.
+The HTTP transport has **no built-in authentication**. It binds to loopback by
+default, and browser requests are rejected unless the `Origin` header is a
+loopback origin or is listed in `MCP_ALLOWED_ORIGINS`, which guards against DNS
+rebinding attacks. Requests without an `Origin` header (ordinary non-browser MCP
+clients) are unaffected.
+
+If you bind to a non-loopback address, secure it at the network or deployment
+layer (authenticating reverse proxy, firewall) to prevent unauthorized access,
+especially in `readwrite` mode.
+
+```bash
+confluence-mcp --transport=http --allowed-origins=https://mcp.example.com
+```
+
+## Limits
+
+- Tool `limit` parameters default to 25 and are clamped to Confluence's maximum
+  of 250.
+- API responses are capped at 4 MiB.
+- Attachment downloads larger than 8 MiB are rejected rather than base64-encoded
+  into a tool result.
 
 ## Authentication
 
@@ -156,9 +180,12 @@ go test ./...
 Tests cover:
 
 - Config loading, validation, and flag/env precedence
-- Confluence REST API client against `httptest.Server` mocks for every endpoint
-  (success, error mapping, multipart attachment uploads)
+- Confluence REST API client against `httptest.Server` mocks for pages, spaces,
+  labels, comments, CQL search, and attachments (success, error mapping,
+  response size limits, multipart attachment uploads)
+- Tool handler input mapping, limit clamping, and result summarization
 - Mode-gated tool registration (`readonly` excludes write tools)
+- HTTP transport origin validation
 - End-to-end smoke tests that spawn the real binary and drive it via the
   official SDK client over both stdio and HTTP transports
 
@@ -215,6 +242,7 @@ search.
 Not currently supported:
 - Blog posts
 - Content properties
+- Page version history
 - Space permissions
 - User management
 

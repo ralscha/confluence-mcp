@@ -153,6 +153,84 @@ func (c *Client) DeletePage(ctx context.Context, pageID string) error {
 	return c.doJSON(ctx, "DELETE", "wiki/api/v2/pages/"+url.PathEscape(pageID), nil, nil, nil)
 }
 
+// GetPageChildrenInput describes parameters for listing direct child pages.
+type GetPageChildrenInput struct {
+	PageID string
+	Sort   string
+	Limit  int
+	Cursor string
+}
+
+// GetPageChildren lists the direct children of a page.
+func (c *Client) GetPageChildren(ctx context.Context, in GetPageChildrenInput) (*ChildPageSearchResult, error) {
+	query := url.Values{}
+	if in.Sort != "" {
+		query.Set("sort", in.Sort)
+	}
+	if in.Limit > 0 {
+		query.Set("limit", strconv.Itoa(in.Limit))
+	}
+	if in.Cursor != "" {
+		query.Set("cursor", in.Cursor)
+	}
+
+	var result ChildPageSearchResult
+	if err := c.doJSON(ctx, "GET", "wiki/api/v2/pages/"+url.PathEscape(in.PageID)+"/children", query, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetPageAncestors lists a page's ancestors, ordered from the root downwards.
+func (c *Client) GetPageAncestors(ctx context.Context, pageID string, limit int) (*AncestorSearchResult, error) {
+	query := url.Values{}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+
+	var result AncestorSearchResult
+	if err := c.doJSON(ctx, "GET", "wiki/api/v2/pages/"+url.PathEscape(pageID)+"/ancestors", query, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetSpacePagesInput describes parameters for listing the pages in a space.
+type GetSpacePagesInput struct {
+	SpaceID string
+	Title   string
+	Status  []string
+	Sort    string
+	Limit   int
+	Cursor  string
+}
+
+// GetSpacePages lists the pages in a space.
+func (c *Client) GetSpacePages(ctx context.Context, in GetSpacePagesInput) (*PageSearchResult, error) {
+	query := url.Values{}
+	if in.Title != "" {
+		query.Set("title", in.Title)
+	}
+	for _, status := range in.Status {
+		query.Add("status", status)
+	}
+	if in.Sort != "" {
+		query.Set("sort", in.Sort)
+	}
+	if in.Limit > 0 {
+		query.Set("limit", strconv.Itoa(in.Limit))
+	}
+	if in.Cursor != "" {
+		query.Set("cursor", in.Cursor)
+	}
+
+	var result PageSearchResult
+	if err := c.doJSON(ctx, "GET", "wiki/api/v2/spaces/"+url.PathEscape(in.SpaceID)+"/pages", query, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // GetPageLabels retrieves labels for a page.
 func (c *Client) GetPageLabels(ctx context.Context, pageID string, limit int) (*LabelSearchResult, error) {
 	query := url.Values{}

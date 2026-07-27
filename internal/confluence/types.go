@@ -75,6 +75,37 @@ type PageSearchResult struct {
 	Links   PaginationLinks `json:"_links"`
 }
 
+// ChildPage is a direct child of a page, as returned by
+// GET /wiki/api/v2/pages/{id}/children.
+type ChildPage struct {
+	ID            string `json:"id,omitempty"`
+	Status        string `json:"status,omitempty"`
+	Title         string `json:"title,omitempty"`
+	SpaceID       string `json:"spaceId,omitempty"`
+	ChildPosition int    `json:"childPosition,omitempty"`
+}
+
+// ChildPageSearchResult is the response body of GET /wiki/api/v2/pages/{id}/children.
+type ChildPageSearchResult struct {
+	Results []ChildPage     `json:"results"`
+	Links   PaginationLinks `json:"_links"`
+}
+
+// Ancestor is an entry in a page's ancestor chain, ordered from the root
+// downwards, as returned by GET /wiki/api/v2/pages/{id}/ancestors.
+type Ancestor struct {
+	ID     string `json:"id,omitempty"`
+	Type   string `json:"type,omitempty"`
+	Status string `json:"status,omitempty"`
+	Title  string `json:"title,omitempty"`
+}
+
+// AncestorSearchResult is the response body of GET /wiki/api/v2/pages/{id}/ancestors.
+type AncestorSearchResult struct {
+	Results []Ancestor      `json:"results"`
+	Links   PaginationLinks `json:"_links"`
+}
+
 // PaginationLinks contains next/prev URLs for paginated results.
 type PaginationLinks struct {
 	Next string `json:"next,omitempty"`

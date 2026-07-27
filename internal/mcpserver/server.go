@@ -5,10 +5,8 @@ import (
 
 	"confluence-mcp/internal/config"
 	"confluence-mcp/internal/confluence"
+	"confluence-mcp/internal/version"
 )
-
-// serverVersion is the reported version of this MCP server implementation.
-const serverVersion = "0.1.0"
 
 // NewServer builds an MCP server exposing Confluence tools backed by client. Read
 // tools are always registered; write tools are only registered when
@@ -16,7 +14,7 @@ const serverVersion = "0.1.0"
 func NewServer(cfg *config.Config, client *confluence.Client) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{
 		Name:    "confluence-mcp",
-		Version: serverVersion,
+		Version: version.Version,
 	}, nil)
 
 	registerReadTools(s, client)

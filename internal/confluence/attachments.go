@@ -3,7 +3,6 @@ package confluence
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/url"
 	"strconv"
 )
@@ -53,11 +52,15 @@ func (c *Client) DownloadAttachment(ctx context.Context, attachmentID string) ([
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := readLimited(resp.Body, maxResponseBytes)
 		return nil, parseAPIError(resp.StatusCode, body)
 	}
 
-	data, err := io.ReadAll(resp.Body)
+	if resp.ContentLength > maxAttachmentBytes {
+		return nil, fmt.Errorf("confluence: attachment %s is %d bytes, exceeding the %d byte download limit", attachmentID, resp.ContentLength, maxAttachmentBytes)
+	}
+
+	data, err := readLimited(resp.Body, maxAttachmentBytes)
 	if err != nil {
 		return nil, fmt.Errorf("confluence: reading attachment data: %w", err)
 	}

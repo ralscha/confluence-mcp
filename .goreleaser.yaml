@@ -8,6 +8,11 @@ builds:
     binary: confluence-mcp
     env:
       - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X confluence-mcp/internal/version.Version={{ .Version }}
+    mod_timestamp: '{{ .CommitTimestamp }}'
     goos:
       - linux
       - darwin

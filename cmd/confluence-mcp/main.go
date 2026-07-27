@@ -6,10 +6,14 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"slices"
 	"syscall"
 	"time"
 
@@ -18,6 +22,7 @@ import (
 	"confluence-mcp/internal/config"
 	"confluence-mcp/internal/confluence"
 	"confluence-mcp/internal/mcpserver"
+	"confluence-mcp/internal/version"
 )
 
 func main() {
@@ -28,6 +33,10 @@ func main() {
 
 func run() error {
 	cfg, err := config.Load(os.Args[1:])
+	if errors.Is(err, config.ErrVersionRequested) {
+		_, _ = fmt.Fprintf(os.Stdout, "confluence-mcp %s\n", version.Version)
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -61,7 +70,7 @@ func runHTTP(ctx context.Context, cfg *config.Config, server *mcp.Server) error 
 
 	httpServer := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           handler,
+		Handler:           checkOrigin(handler, cfg.AllowedOrigins),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -83,4 +92,38 @@ func runHTTP(ctx context.Context, cfg *config.Config, server *mcp.Server) error 
 		defer cancel()
 		return httpServer.Shutdown(shutdownCtx)
 	}
+}
+
+// checkOrigin rejects browser requests from unexpected origins, guarding the
+// unauthenticated HTTP transport against DNS rebinding attacks. Requests
+// without an Origin header come from non-browser clients and are allowed.
+func checkOrigin(next http.Handler, allowedOrigins []string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin != "" && !originAllowed(origin, allowedOrigins) {
+			http.Error(w, "forbidden origin", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// originAllowed reports whether origin may call the HTTP transport. Loopback
+// origins are always permitted; anything else must be listed explicitly.
+func originAllowed(origin string, allowedOrigins []string) bool {
+	if slices.Contains(allowedOrigins, origin) {
+		return true
+	}
+
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+
+	host := u.Hostname()
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

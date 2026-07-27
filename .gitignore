@@ -1,2 +1,8 @@
 *.exe
 .env
+
+# Build and test artifacts
+/dist/
+*.test
+cover.out
+coverage.out
