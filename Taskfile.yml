@@ -13,6 +13,11 @@ tasks:
       - go fix ./...
       - go fmt ./...
 
+  build:
+    desc: Build the Confluence MCP server
+    cmds:
+      - go build -o confluence-mcp{{exeExt}} ./cmd/confluence-mcp
+
   test:
     desc: Run all Go tests
     cmds:
