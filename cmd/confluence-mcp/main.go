@@ -66,7 +66,7 @@ func run() error {
 func runHTTP(ctx context.Context, cfg *config.Config, server *mcp.Server) error {
 	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
 		return server
-	}, nil)
+	}, &mcp.StreamableHTTPOptions{Stateless: true})
 
 	httpServer := &http.Server{
 		Addr:              cfg.HTTPAddr,
