@@ -119,15 +119,12 @@ func (c *Client) CreateFooterComment(ctx context.Context, in CreateFooterComment
 		return nil, fmt.Errorf("confluence: CreateFooterComment requires page ID or parent comment ID")
 	}
 
-	bodyType := in.BodyType
-	if bodyType == "" {
-		bodyType = "storage"
+	commentBody, err := bodyForWrite(in.Body, in.BodyType)
+	if err != nil {
+		return nil, err
 	}
 	body := map[string]any{
-		"body": map[string]any{
-			"representation": bodyType,
-			"value":          in.Body,
-		},
+		"body": commentBody,
 	}
 	if in.PageID != "" {
 		body["pageId"] = in.PageID
@@ -153,16 +150,16 @@ type UpdateFooterCommentInput struct {
 
 // UpdateFooterComment updates the body of an existing footer comment.
 func (c *Client) UpdateFooterComment(ctx context.Context, commentID string, in UpdateFooterCommentInput) (*Comment, error) {
-	bodyType := in.BodyType
-	if bodyType == "" {
-		bodyType = "storage"
+	if in.Version < 1 {
+		return nil, fmt.Errorf("confluence: UpdateFooterComment requires the current version number")
+	}
+	commentBody, err := bodyForWrite(in.Body, in.BodyType)
+	if err != nil {
+		return nil, err
 	}
 	body := map[string]any{
-		"version": map[string]any{"number": in.Version},
-		"body": map[string]any{
-			"representation": bodyType,
-			"value":          in.Body,
-		},
+		"version": map[string]any{"number": in.Version + 1},
+		"body":    commentBody,
 	}
 	if in.VersionNote != "" {
 		body["version"].(map[string]any)["message"] = in.VersionNote

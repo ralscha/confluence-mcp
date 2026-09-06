@@ -9,17 +9,20 @@ import (
 
 func TestClient_GetSpace(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if got, want := r.URL.Path, "/wiki/api/v2/spaces/ENG"; got != want {
+		if got, want := r.URL.Path, "/wiki/api/v2/spaces"; got != want {
 			t.Errorf("path = %q, want %q", got, want)
 		}
-		writeJSON(w, `{
+		if got, want := r.URL.Query().Get("keys"), "ENG"; got != want {
+			t.Errorf("key filter = %q, want %q", got, want)
+		}
+		writeJSON(w, `{"results": [{
 			"id": "9",
 			"key": "ENG",
 			"name": "Engineering",
 			"type": "global",
 			"status": "current",
 			"_links": {"webui": "/spaces/ENG"}
-		}`)
+		}]}`)
 	})
 
 	space, err := client.GetSpace(context.Background(), "ENG")
@@ -31,6 +34,23 @@ func TestClient_GetSpace(t *testing.T) {
 	}
 	if got, want := space.Links.WebUI, "/spaces/ENG"; got != want {
 		t.Errorf("web UI link = %q, want %q", got, want)
+	}
+}
+
+func TestClient_GetSpaceByID(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.URL.Path, "/wiki/api/v2/spaces/9"; got != want {
+			t.Errorf("path = %q, want %q", got, want)
+		}
+		writeJSON(w, `{"id":"9","key":"ENG","name":"Engineering"}`)
+	})
+
+	space, err := client.GetSpace(context.Background(), "9")
+	if err != nil {
+		t.Fatalf("GetSpace failed: %v", err)
+	}
+	if got, want := space.Key, "ENG"; got != want {
+		t.Errorf("space key = %q, want %q", got, want)
 	}
 }
 
@@ -82,8 +102,7 @@ func TestClient_ListSpaces(t *testing.T) {
 
 func TestClient_GetSpaceNotFound(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		writeJSON(w, `{"errors": [{"status": 404, "title": "Space not found"}]}`)
+		writeJSON(w, `{"results": []}`)
 	})
 
 	_, err := client.GetSpace(context.Background(), "MISSING")

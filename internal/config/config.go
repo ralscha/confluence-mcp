@@ -139,6 +139,8 @@ func (c *Config) validate() error {
 		errs = append(errs, fmt.Sprintf("CONFLUENCE_BASE_URL is not a valid URL: %v", err))
 	} else if u.Scheme != "https" || u.Host == "" {
 		errs = append(errs, "CONFLUENCE_BASE_URL must be an absolute https URL")
+	} else if u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		errs = append(errs, "CONFLUENCE_BASE_URL must not contain credentials, a query, or a fragment")
 	}
 
 	if c.ConfluenceEmail == "" {
@@ -162,8 +164,10 @@ func (c *Config) validate() error {
 			errs = append(errs, fmt.Sprintf("MCP_HTTP_ADDR is not a valid host:port address: %v", err))
 		}
 		for _, origin := range c.AllowedOrigins {
-			if u, err := url.Parse(origin); err != nil || u.Scheme == "" || u.Host == "" {
-				errs = append(errs, fmt.Sprintf("allowed origin %q must be an absolute URL such as https://example.com", origin))
+			u, err := url.Parse(origin)
+			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" ||
+				u.User != nil || u.Path != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+				errs = append(errs, fmt.Sprintf("allowed origin %q must contain only an http(s) scheme and host, such as https://example.com", origin))
 			}
 		}
 	}

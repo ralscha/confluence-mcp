@@ -2,12 +2,28 @@ package confluence
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"strconv"
 )
 
 // GetSpace fetches a single space by ID or key.
 func (c *Client) GetSpace(ctx context.Context, spaceKeyOrID string) (*Space, error) {
+	if _, err := strconv.ParseUint(spaceKeyOrID, 10, 64); err != nil {
+		// The v2 single-space route accepts only an ID. Resolve human-friendly
+		// keys through the list endpoint first.
+		result, listErr := c.ListSpaces(ctx, ListSpacesInput{Keys: []string{spaceKeyOrID}, Limit: 2})
+		if listErr != nil {
+			return nil, listErr
+		}
+		for i := range result.Results {
+			if result.Results[i].Key == spaceKeyOrID {
+				return &result.Results[i], nil
+			}
+		}
+		return nil, &APIError{StatusCode: 404, Message: fmt.Sprintf("space with key %q not found", spaceKeyOrID)}
+	}
+
 	var space Space
 	if err := c.doJSON(ctx, "GET", "wiki/api/v2/spaces/"+url.PathEscape(spaceKeyOrID), nil, nil, &space); err != nil {
 		return nil, err

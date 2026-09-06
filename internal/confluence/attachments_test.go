@@ -20,10 +20,18 @@ func TestClient_GetPageAttachments(t *testing.T) {
 		if got, want := r.URL.Query().Get("limit"), "10"; got != want {
 			t.Errorf("limit = %q, want %q", got, want)
 		}
-		writeJSON(w, `{"results": [{"id": "att1", "title": "diagram.png", "mediaType": "image/png", "fileSize": 2048}]}`)
+		if got, want := r.URL.Query().Get("cursor"), "next"; got != want {
+			t.Errorf("cursor = %q, want %q", got, want)
+		}
+		if got, want := r.URL.Query().Get("filename"), "diagram.png"; got != want {
+			t.Errorf("filename = %q, want %q", got, want)
+		}
+		writeJSON(w, `{"results": [{"id": "att1", "title": "diagram.png", "mediaType": "image/png", "fileSize": 2048}], "_links":{"next":"/wiki/api/v2/pages/123/attachments?cursor=more"}}`)
 	})
 
-	result, err := client.GetPageAttachments(context.Background(), "123", 10)
+	result, err := client.GetPageAttachments(context.Background(), GetPageAttachmentsInput{
+		PageID: "123", Filename: "diagram.png", Limit: 10, Cursor: "next",
+	})
 	if err != nil {
 		t.Fatalf("GetPageAttachments failed: %v", err)
 	}
@@ -32,6 +40,17 @@ func TestClient_GetPageAttachments(t *testing.T) {
 	}
 	if got, want := result.Results[0].FileSize, int64(2048); got != want {
 		t.Errorf("file size = %d, want %d", got, want)
+	}
+}
+
+func TestClient_DownloadAttachmentRequiresPageAttachment(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, `{"id":"att1","blogPostId":"42"}`)
+	})
+
+	_, err := client.DownloadAttachment(context.Background(), "att1")
+	if err == nil || !strings.Contains(err.Error(), "not attached to a page") {
+		t.Fatalf("error = %v, want page attachment error", err)
 	}
 }
 
@@ -44,7 +63,7 @@ func TestClient_UploadAttachment(t *testing.T) {
 	)
 
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if got, want := r.URL.Path, "/wiki/api/v2/pages/123/attachments"; got != want {
+		if got, want := r.URL.Path, "/wiki/rest/api/content/123/child/attachment"; got != want {
 			t.Errorf("path = %q, want %q", got, want)
 		}
 		gotToken = r.Header.Get("X-Atlassian-Token")
@@ -101,10 +120,14 @@ func TestClient_UploadAttachmentNoResults(t *testing.T) {
 
 func TestClient_DownloadAttachment(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if got, want := r.URL.Path, "/wiki/api/v2/attachments/att1/data"; got != want {
-			t.Errorf("path = %q, want %q", got, want)
+		switch r.URL.Path {
+		case "/wiki/api/v2/attachments/att1":
+			writeJSON(w, `{"id":"att1","pageId":"123"}`)
+		case "/wiki/rest/api/content/123/child/attachment/att1/download":
+			_, _ = w.Write([]byte("file-contents"))
+		default:
+			t.Errorf("unexpected path %q", r.URL.Path)
 		}
-		_, _ = w.Write([]byte("file-contents"))
 	})
 
 	data, err := client.DownloadAttachment(context.Background(), "att1")
@@ -118,6 +141,10 @@ func TestClient_DownloadAttachment(t *testing.T) {
 
 func TestClient_DownloadAttachmentError(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/wiki/api/v2/attachments/att1" {
+			writeJSON(w, `{"id":"att1","pageId":"123"}`)
+			return
+		}
 		w.WriteHeader(http.StatusForbidden)
 		writeJSON(w, `{"message": "No permission"}`)
 	})
@@ -133,6 +160,10 @@ func TestClient_DownloadAttachmentError(t *testing.T) {
 
 func TestClient_DownloadAttachmentTooLargeContentLength(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/wiki/api/v2/attachments/att1" {
+			writeJSON(w, `{"id":"att1","pageId":"123"}`)
+			return
+		}
 		w.Header().Set("Content-Length", strconv.Itoa(maxAttachmentBytes+1))
 		_, _ = io.Copy(w, bytes.NewReader(make([]byte, maxAttachmentBytes+1)))
 	})
@@ -148,6 +179,10 @@ func TestClient_DownloadAttachmentTooLargeContentLength(t *testing.T) {
 
 func TestClient_DownloadAttachmentTooLargeUnknownLength(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/wiki/api/v2/attachments/att1" {
+			writeJSON(w, `{"id":"att1","pageId":"123"}`)
+			return
+		}
 		// No Content-Length: the response is chunked, so the size is only
 		// discovered while reading.
 		w.WriteHeader(http.StatusOK)

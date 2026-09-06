@@ -28,6 +28,24 @@ func TestClampLimit(t *testing.T) {
 	}
 }
 
+func TestClampVersionLimit(t *testing.T) {
+	if got, want := clampVersionLimit(250, "storage"), 50; got != want {
+		t.Errorf("clampVersionLimit with body = %d, want %d", got, want)
+	}
+	if got, want := clampVersionLimit(250, ""), 250; got != want {
+		t.Errorf("clampVersionLimit without body = %d, want %d", got, want)
+	}
+}
+
+func TestClampSearchLimit(t *testing.T) {
+	if got, want := clampSearchLimit(250, []string{"body.export_view"}), 25; got != want {
+		t.Errorf("clampSearchLimit with export view = %d, want %d", got, want)
+	}
+	if got, want := clampSearchLimit(250, []string{"body.storage"}), 250; got != want {
+		t.Errorf("clampSearchLimit with storage = %d, want %d", got, want)
+	}
+}
+
 func TestNextCursor(t *testing.T) {
 	tests := []struct {
 		name string

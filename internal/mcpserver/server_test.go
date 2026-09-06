@@ -37,10 +37,12 @@ func TestNewServer_ReadOnly(t *testing.T) {
 		"confluence_search_cql",
 		"confluence_get_page_children",
 		"confluence_get_page_ancestors",
+		"confluence_list_page_versions",
 		"confluence_get_space_pages",
 		"confluence_list_page_comments",
 		"confluence_get_comment",
 		"confluence_list_comment_children",
+		"confluence_get_attachment",
 	} {
 		if !tools[name] {
 			t.Fatalf("readonly server missing tool %q", name)
@@ -50,6 +52,7 @@ func TestNewServer_ReadOnly(t *testing.T) {
 		"confluence_create_footer_comment",
 		"confluence_update_footer_comment",
 		"confluence_delete_footer_comment",
+		"confluence_remove_page_label",
 	} {
 		if tools[name] {
 			t.Fatalf("readonly server unexpectedly registered write tool %q", name)
@@ -82,6 +85,7 @@ func TestNewServer_ReadWrite(t *testing.T) {
 		"confluence_create_footer_comment",
 		"confluence_update_footer_comment",
 		"confluence_delete_footer_comment",
+		"confluence_remove_page_label",
 	} {
 		if !tools[name] {
 			t.Fatalf("readwrite server missing tool %q", name)

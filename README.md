@@ -52,8 +52,9 @@ Run `confluence-mcp --version` to print the build version.
 | ----------------------------------- | ---------------------------------------------------------- |
 | `confluence_get_page`               | Get a single Confluence page by ID                         |
 | `confluence_search_pages`           | Search Confluence pages with filters and pagination        |
-| `confluence_get_page_children`      | List the direct child pages of a page                      |
+| `confluence_get_page_children`      | List direct child content of a page                        |
 | `confluence_get_page_ancestors`     | List a page's ancestors, from the root downwards           |
+| `confluence_list_page_versions`     | List a page's version history                              |
 | `confluence_get_space_pages`        | List the pages in a space                                  |
 | `confluence_search_cql`             | Search Confluence content with CQL                         |
 | `confluence_get_space`              | Get a single Confluence space by key or ID                 |
@@ -63,6 +64,7 @@ Run `confluence-mcp --version` to print the build version.
 | `confluence_get_comment`            | Get a footer or inline comment by ID                       |
 | `confluence_list_comment_children`  | List replies to a footer or inline comment                 |
 | `confluence_get_page_attachments`   | Get attachments on a Confluence page                       |
+| `confluence_get_attachment`         | Get attachment metadata by ID                              |
 | `confluence_download_attachment`    | Download a Confluence attachment's content (base64-encoded)|
 
 ### Write tools (only in `readwrite` mode)
@@ -73,6 +75,7 @@ Run `confluence-mcp --version` to print the build version.
 | `confluence_update_page`        | Update title and/or content of a page          |
 | `confluence_delete_page`        | Delete a Confluence page                       |
 | `confluence_add_page_label`     | Add a label to a Confluence page               |
+| `confluence_remove_page_label`  | Remove a label from a Confluence page          |
 | `confluence_create_footer_comment` | Create a footer comment or reply             |
 | `confluence_update_footer_comment` | Update the body of a footer comment           |
 | `confluence_delete_footer_comment` | Delete a footer comment                       |
@@ -82,11 +85,12 @@ Run `confluence-mcp --version` to print the build version.
 The default mode is `readonly`. Set `CONFLUENCE_MODE=readwrite` (or
 `--mode=readwrite`) explicitly to enable write tools.
 
-Page content uses [Confluence storage format](https://confluence.atlassian.com/doc/confluence-storage-format-790796544.html)
-(XHTML) or Atlas Document Format (ADF). The server provides basic plain text
-conversion helpers, so you can work with plain strings without handling markup
-directly. Rich formatting (tables, macros, etc.) is not preserved through these
-conversions.
+Page and comment content uses [Confluence storage format](https://confluence.atlassian.com/doc/confluence-storage-format-790796544.html)
+(XHTML) by default, or Atlas Document Format (ADF). For write tools, set
+`body_type` to `plain_text` to have text safely escaped and converted to storage
+format, `storage` for XHTML, or `atlas_doc_format` for ADF JSON. Read tools
+return best-effort plain text; rich formatting such as tables and macros is not
+preserved.
 
 ## Transports
 
@@ -126,6 +130,10 @@ confluence-mcp --transport=http --allowed-origins=https://mcp.example.com
 
 - Tool `limit` parameters default to 25 and are clamped to Confluence's maximum
   of 250.
+- Page-version requests that include `body_format` are clamped to Confluence's
+  lower maximum of 50.
+- CQL searches expanding `body.export_view` or `body.styled_view` are clamped
+  to Confluence's maximum of 25.
 - API responses are capped at 4 MiB.
 - Attachment downloads larger than 8 MiB are rejected rather than base64-encoded
   into a tool result.
@@ -153,8 +161,8 @@ For scoped tokens, grant these Confluence scopes:
 
 | Mode | Token scopes | Confluence permissions the account still needs |
 | ---- | ------------ | ---------------------------------------------- |
-| `readonly` | `read:page:confluence`, `read:space:confluence`, `read:attachment:confluence`, `read:comment:confluence`, `read:content-details:confluence` | Confluence product access (`Can use`) and view permission for the spaces/pages/comments/attachments to read. Page restrictions still apply. |
-| `readwrite` | `read:page:confluence`, `read:space:confluence`, `read:attachment:confluence`, `read:comment:confluence`, `read:content-details:confluence`, `write:page:confluence`, `write:label:confluence`, `write:attachment:confluence`, `write:comment:confluence`, `delete:page:confluence`, `delete:attachment:confluence`, `delete:comment:confluence` | The readonly permissions, plus only the space permissions required by the write tools you use: add/update/delete pages, add labels, add attachments, add/update/delete comments, and/or delete attachments. |
+| `readonly` | `read:page:confluence`, `read:space:confluence`, `read:attachment:confluence`, `read:comment:confluence`, `read:content-details:confluence`, `read:content.metadata:confluence`, `read:hierarchical-content:confluence` | Confluence product access (`Can use`) and view permission for the spaces/pages/comments/attachments to read. Page restrictions still apply. |
+| `readwrite` | All readonly scopes, plus `write:page:confluence`, `write:label:confluence`, `write:attachment:confluence`, `write:comment:confluence`, `delete:page:confluence`, `delete:attachment:confluence`, `delete:comment:confluence` | The readonly permissions, plus only the space permissions required by the write tools you use: add/update/delete pages, add/remove labels, add attachments, add/update/delete comments, and/or delete attachments. |
 
 `confluence-mcp` does not need Confluence admin scopes or space-management
 scopes because it does not create spaces or change space settings.
@@ -163,7 +171,7 @@ scopes because it does not create spaces or change space settings.
 
 ### Requirements
 
-- Go 1.26+
+- Go 1.27.1+
 
 ### Build
 
@@ -234,15 +242,14 @@ Add to `.vscode/mcp.json` (or your user-level `mcp.json`):
 ## API Coverage
 
 This server primarily uses the [Confluence Cloud REST API v2](https://developer.atlassian.com/cloud/confluence/rest/v2/intro/).
-CQL search uses Confluence's REST API v1 search endpoint because that is where
-Confluence exposes advanced search. The server covers a core subset of
-functionality focused on pages, spaces, labels, comments, attachments, and CQL
-search.
+CQL search, attachment upload/download, and label removal use Confluence REST
+API v1 endpoints because those operations are not exposed by v2. The server
+covers a core subset focused on pages, spaces, labels, comments, attachments,
+page history, and CQL search.
 
 Not currently supported:
 - Blog posts
 - Content properties
-- Page version history
 - Space permissions
 - User management
 

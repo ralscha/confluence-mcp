@@ -29,7 +29,7 @@ func newTestClient(t *testing.T, handler http.HandlerFunc) *confluence.Client {
 
 func TestGetPageHandler(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if got, want := r.URL.Query().Get("body-format"), "storage,view"; got != want {
+		if got, want := r.URL.Query().Get("body-format"), "storage"; got != want {
 			t.Errorf("body-format = %q, want %q", got, want)
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -43,7 +43,7 @@ func TestGetPageHandler(t *testing.T) {
 
 	_, out, err := getPage(client)(context.Background(), nil, GetPageInput{
 		PageID:     "123",
-		BodyFormat: []string{"storage", "view"},
+		BodyFormat: "storage",
 	})
 	if err != nil {
 		t.Fatalf("getPage failed: %v", err)
@@ -73,8 +73,10 @@ func TestGetPageHandlerError(t *testing.T) {
 
 func TestSearchPagesHandlerDefaultsAndCursor(t *testing.T) {
 	var gotLimit string
+	var gotBodyFormat string
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		gotLimit = r.URL.Query().Get("limit")
+		gotBodyFormat = r.URL.Query().Get("body-format")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"results": [{"id": "123", "title": "Roadmap"}],
@@ -82,12 +84,15 @@ func TestSearchPagesHandlerDefaultsAndCursor(t *testing.T) {
 		}`))
 	})
 
-	_, out, err := searchPages(client)(context.Background(), nil, SearchPagesInput{})
+	_, out, err := searchPages(client)(context.Background(), nil, SearchPagesInput{BodyFormat: "storage"})
 	if err != nil {
 		t.Fatalf("searchPages failed: %v", err)
 	}
 	if got, want := gotLimit, "25"; got != want {
 		t.Errorf("limit = %q, want the default %q", got, want)
+	}
+	if got, want := gotBodyFormat, "storage"; got != want {
+		t.Errorf("body format = %q, want %q", got, want)
 	}
 	if got, want := out.NextCursor, "next-token"; got != want {
 		t.Errorf("next cursor = %q, want %q", got, want)
@@ -115,13 +120,13 @@ func TestSearchPagesHandlerClampsLimit(t *testing.T) {
 
 func TestGetPageChildrenHandler(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if got, want := r.URL.Path, "/wiki/api/v2/pages/123/children"; got != want {
+		if got, want := r.URL.Path, "/wiki/api/v2/pages/123/direct-children"; got != want {
 			t.Errorf("path = %q, want %q", got, want)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
-			"results": [{"id": "456", "title": "Child", "status": "current", "spaceId": "9", "childPosition": 2}],
-			"_links": {"next": "/wiki/api/v2/pages/123/children?cursor=more"}
+			"results": [{"id": "456", "type": "page", "title": "Child", "status": "current", "spaceId": "9", "childPosition": 2}],
+			"_links": {"next": "/wiki/api/v2/pages/123/direct-children?cursor=more"}
 		}`))
 	})
 
@@ -132,7 +137,7 @@ func TestGetPageChildrenHandler(t *testing.T) {
 	if got, want := len(out.Children), 1; got != want {
 		t.Fatalf("children = %d, want %d", got, want)
 	}
-	want := ChildPageSummary{ID: "456", Title: "Child", Status: "current", SpaceID: "9", ChildPosition: 2}
+	want := ChildPageSummary{ID: "456", Type: "page", Title: "Child", Status: "current", SpaceID: "9", ChildPosition: 2}
 	if out.Children[0] != want {
 		t.Errorf("child = %+v, want %+v", out.Children[0], want)
 	}
@@ -163,6 +168,30 @@ func TestGetPageAncestorsHandler(t *testing.T) {
 	}
 }
 
+func TestListPageVersionsHandler(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.URL.Path, "/wiki/api/v2/pages/123/versions"; got != want {
+			t.Errorf("path = %q, want %q", got, want)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"results":[{"number":2,"message":"updated","page":{"title":"Roadmap","body":{"storage":{"value":"<p>Plan</p>"}}}}],
+			"_links":{"next":"/wiki/api/v2/pages/123/versions?cursor=more"}
+		}`))
+	})
+
+	_, out, err := listPageVersions(client)(context.Background(), nil, ListPageVersionsInput{PageID: "123", BodyFormat: "storage"})
+	if err != nil {
+		t.Fatalf("listPageVersions failed: %v", err)
+	}
+	if got, want := out.Versions[0].Content, "Plan"; got != want {
+		t.Errorf("content = %q, want %q", got, want)
+	}
+	if got, want := out.NextCursor, "more"; got != want {
+		t.Errorf("next cursor = %q, want %q", got, want)
+	}
+}
+
 func TestGetSpacePagesHandler(t *testing.T) {
 	var gotQuery url.Values
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -175,14 +204,18 @@ func TestGetSpacePagesHandler(t *testing.T) {
 	})
 
 	_, out, err := getSpacePages(client)(context.Background(), nil, GetSpacePagesInput{
-		SpaceID: "9",
-		Sort:    "title",
+		SpaceID:    "9",
+		Sort:       "title",
+		BodyFormat: "storage",
 	})
 	if err != nil {
 		t.Fatalf("getSpacePages failed: %v", err)
 	}
 	if got, want := gotQuery.Get("sort"), "title"; got != want {
 		t.Errorf("sort = %q, want %q", got, want)
+	}
+	if got, want := gotQuery.Get("body-format"), "storage"; got != want {
+		t.Errorf("body format = %q, want %q", got, want)
 	}
 	if got, want := len(out.Pages), 1; got != want {
 		t.Fatalf("pages = %d, want %d", got, want)
@@ -212,6 +245,11 @@ func TestListPageCommentsHandlerDefaultsToFooter(t *testing.T) {
 
 func TestDownloadAttachmentHandler(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/wiki/api/v2/attachments/att1" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"att1","pageId":"123"}`))
+			return
+		}
 		_, _ = w.Write([]byte("file-contents"))
 	})
 
@@ -274,5 +312,19 @@ func TestDeletePageHandler(t *testing.T) {
 	}
 	if !out.Deleted {
 		t.Error("deleted = false, want true")
+	}
+}
+
+func TestRemovePageLabelHandler(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	_, out, err := removePageLabel(client)(context.Background(), nil, RemovePageLabelInput{PageID: "123", LabelName: "old"})
+	if err != nil {
+		t.Fatalf("removePageLabel failed: %v", err)
+	}
+	if !out.Removed {
+		t.Error("removed = false, want true")
 	}
 }

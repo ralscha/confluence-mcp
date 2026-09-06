@@ -79,3 +79,38 @@ func TestPlainTextToStorage(t *testing.T) {
 		})
 	}
 }
+
+func TestADFToPlainText(t *testing.T) {
+	adf := `{
+		"type":"doc",
+		"version":1,
+		"content":[
+			{"type":"heading","content":[{"type":"text","text":"Roadmap"}]},
+			{"type":"paragraph","content":[{"type":"text","text":"First line"},{"type":"hardBreak"},{"type":"text","text":"second line"}]}
+		]
+	}`
+
+	if got, want := adfToPlainText(adf), "Roadmap\nFirst line\nsecond line"; got != want {
+		t.Errorf("adfToPlainText() = %q, want %q", got, want)
+	}
+}
+
+func TestBodyForWrite(t *testing.T) {
+	body, err := bodyForWrite("A & B\nnext", "plain_text")
+	if err != nil {
+		t.Fatalf("bodyForWrite failed: %v", err)
+	}
+	if got, want := body.Representation, "storage"; got != want {
+		t.Errorf("representation = %q, want %q", got, want)
+	}
+	if got, want := body.Value, "<p>A &amp; B<br/>next</p>"; got != want {
+		t.Errorf("value = %q, want %q", got, want)
+	}
+
+	if _, err := bodyForWrite("not-json", "atlas_doc_format"); err == nil {
+		t.Fatal("expected invalid ADF to fail")
+	}
+	if _, err := bodyForWrite("text", "unknown"); err == nil {
+		t.Fatal("expected unsupported body type to fail")
+	}
+}

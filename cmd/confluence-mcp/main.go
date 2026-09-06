@@ -111,13 +111,13 @@ func checkOrigin(next http.Handler, allowedOrigins []string) http.Handler {
 // originAllowed reports whether origin may call the HTTP transport. Loopback
 // origins are always permitted; anything else must be listed explicitly.
 func originAllowed(origin string, allowedOrigins []string) bool {
+	u, err := url.Parse(origin)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" ||
+		u.User != nil || u.Path != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return false
+	}
 	if slices.Contains(allowedOrigins, origin) {
 		return true
-	}
-
-	u, err := url.Parse(origin)
-	if err != nil || u.Host == "" {
-		return false
 	}
 
 	host := u.Hostname()

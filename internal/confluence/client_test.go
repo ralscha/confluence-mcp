@@ -40,6 +40,16 @@ func TestNewClient(t *testing.T) {
 	}
 }
 
+func TestNewClient_RejectsInvalidBaseURL(t *testing.T) {
+	for _, baseURL := range []string{"test.atlassian.net", "ftp://test.atlassian.net", "https://test.atlassian.net?tenant=other"} {
+		t.Run(baseURL, func(t *testing.T) {
+			if _, err := NewClient(baseURL, "test@example.com", "test-token", nil); err == nil {
+				t.Fatalf("NewClient(%q) succeeded, want an error", baseURL)
+			}
+		})
+	}
+}
+
 func TestClient_BasicAuth(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		email, token, ok := r.BasicAuth()
@@ -55,7 +65,7 @@ func TestClient_BasicAuth(t *testing.T) {
 		writeJSON(w, `{"id": "123"}`)
 	})
 
-	if _, err := client.GetPage(context.Background(), "123", nil); err != nil {
+	if _, err := client.GetPage(context.Background(), "123", ""); err != nil {
 		t.Fatalf("GetPage failed: %v", err)
 	}
 }
@@ -72,7 +82,7 @@ func TestClient_APIError(t *testing.T) {
 		t.Fatalf("NewClient failed: %v", err)
 	}
 
-	_, err = client.GetPage(context.Background(), "12345", nil)
+	_, err = client.GetPage(context.Background(), "12345", "")
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -126,7 +136,7 @@ func TestClient_RejectsOversizedResponse(t *testing.T) {
 		_, _ = w.Write([]byte(`{"id": "` + strings.Repeat("a", maxResponseBytes+1) + `"}`))
 	})
 
-	_, err := client.GetPage(context.Background(), "123", nil)
+	_, err := client.GetPage(context.Background(), "123", "")
 	if err == nil {
 		t.Fatal("expected error for oversized response, got nil")
 	}

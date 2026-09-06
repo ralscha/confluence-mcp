@@ -175,7 +175,7 @@ func TestClient_FooterCommentWrites(t *testing.T) {
 				t.Fatalf("decode update body: %v", err)
 			}
 			version := body["version"].(map[string]any)
-			if got, want := version["number"], float64(1); got != want {
+			if got, want := version["number"], float64(2); got != want {
 				t.Fatalf("version number = %v, want %v", got, want)
 			}
 			if got, want := version["message"], "clarify"; got != want {

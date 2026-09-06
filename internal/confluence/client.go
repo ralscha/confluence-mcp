@@ -56,6 +56,12 @@ func NewClient(baseURL, email, token string, httpClient *http.Client) (*Client, 
 	if err != nil {
 		return nil, fmt.Errorf("confluence: invalid base URL: %w", err)
 	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return nil, fmt.Errorf("confluence: base URL must be an absolute http(s) URL")
+	}
+	if u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return nil, fmt.Errorf("confluence: base URL must not contain credentials, a query, or a fragment")
+	}
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
@@ -130,6 +136,10 @@ func (c *Client) doJSON(ctx context.Context, method, path string, query url.Valu
 func (c *Client) newRequest(ctx context.Context, method, path string, query url.Values, body io.Reader) (*http.Request, error) {
 	u := *c.baseURL
 	u.Path = strings.TrimSuffix(u.Path, "/") + "/" + strings.TrimPrefix(path, "/")
+	u.RawPath = ""
+	u.RawQuery = ""
+	u.ForceQuery = false
+	u.Fragment = ""
 	if query != nil {
 		u.RawQuery = query.Encode()
 	}

@@ -22,6 +22,9 @@ const (
 	defaultLimit = 25
 	// maxLimit is the largest page size the Confluence REST API accepts.
 	maxLimit = 250
+	// maxVersionBodyLimit is Atlassian's lower cap when historical page bodies
+	// are requested alongside version metadata.
+	maxVersionBodyLimit = 50
 )
 
 // clampLimit normalizes a caller-supplied page size into the range Confluence
@@ -35,6 +38,24 @@ func clampLimit(limit int) int {
 	default:
 		return limit
 	}
+}
+
+func clampVersionLimit(limit int, bodyFormat string) int {
+	limit = clampLimit(limit)
+	if bodyFormat != "" && limit > maxVersionBodyLimit {
+		return maxVersionBodyLimit
+	}
+	return limit
+}
+
+func clampSearchLimit(limit int, expand []string) int {
+	limit = clampLimit(limit)
+	for _, field := range expand {
+		if (field == "body.export_view" || field == "body.styled_view") && limit > defaultLimit {
+			return defaultLimit
+		}
+	}
+	return limit
 }
 
 func nextCursor(nextLink string) string {
@@ -81,8 +102,8 @@ func pageToSummary(page *confluence.Page) PageSummary {
 
 // GetPageInput is the input for the confluence_get_page tool.
 type GetPageInput struct {
-	PageID     string   `json:"page_id" jsonschema:"the Confluence page ID"`
-	BodyFormat []string `json:"body_format,omitempty" jsonschema:"optional list of body formats to include (storage, atlas_doc_format, view)"`
+	PageID     string `json:"page_id" jsonschema:"the Confluence page ID"`
+	BodyFormat string `json:"body_format,omitempty" jsonschema:"optional body format to include (storage, atlas_doc_format, or view)"`
 }
 
 func getPage(client *confluence.Client) mcp.ToolHandlerFor[GetPageInput, PageSummary] {
@@ -97,11 +118,77 @@ func getPage(client *confluence.Client) mcp.ToolHandlerFor[GetPageInput, PageSum
 
 // SearchPagesInput is the input for the confluence_search_pages tool.
 type SearchPagesInput struct {
-	SpaceID string `json:"space_id,omitempty" jsonschema:"filter by space ID"`
-	Title   string `json:"title,omitempty" jsonschema:"filter by page title (partial match)"`
-	Status  string `json:"status,omitempty" jsonschema:"filter by status (current, archived)"`
-	Limit   int    `json:"limit,omitempty" jsonschema:"maximum number of results to return, defaults to 25, maximum 250"`
-	Cursor  string `json:"cursor,omitempty" jsonschema:"pagination cursor for next page of results"`
+	SpaceID    string `json:"space_id,omitempty" jsonschema:"filter by space ID"`
+	Title      string `json:"title,omitempty" jsonschema:"filter by exact page title"`
+	Status     string `json:"status,omitempty" jsonschema:"filter by status (current, archived)"`
+	Sort       string `json:"sort,omitempty" jsonschema:"optional Confluence page sort order"`
+	BodyFormat string `json:"body_format,omitempty" jsonschema:"optional body format to include (storage or atlas_doc_format)"`
+	Limit      int    `json:"limit,omitempty" jsonschema:"maximum number of results to return, defaults to 25, maximum 250"`
+	Cursor     string `json:"cursor,omitempty" jsonschema:"pagination cursor for next page of results"`
+}
+
+// PageVersionSummary is a flattened entry in a page's version history.
+type PageVersionSummary struct {
+	Number    int    `json:"number" jsonschema:"the version number"`
+	Message   string `json:"message,omitempty" jsonschema:"the version message"`
+	CreatedAt string `json:"created_at,omitempty" jsonschema:"when the version was created"`
+	AuthorID  string `json:"author_id,omitempty" jsonschema:"the author's account ID"`
+	MinorEdit bool   `json:"minor_edit,omitempty" jsonschema:"whether this was marked as a minor edit"`
+	Title     string `json:"title,omitempty" jsonschema:"the page title at this version"`
+	Content   string `json:"content,omitempty" jsonschema:"plain text content when body_format was requested"`
+}
+
+// ListPageVersionsInput is the input for confluence_list_page_versions.
+type ListPageVersionsInput struct {
+	PageID     string `json:"page_id" jsonschema:"the Confluence page ID"`
+	BodyFormat string `json:"body_format,omitempty" jsonschema:"optional historical body format to include (storage or atlas_doc_format)"`
+	Sort       string `json:"sort,omitempty" jsonschema:"optional version sort order, such as -modified-date"`
+	Limit      int    `json:"limit,omitempty" jsonschema:"maximum versions to return, defaults to 25, maximum 250 (50 when body_format is set)"`
+	Cursor     string `json:"cursor,omitempty" jsonschema:"pagination cursor for the next page of results"`
+}
+
+// ListPageVersionsOutput is the output for confluence_list_page_versions.
+type ListPageVersionsOutput struct {
+	Versions   []PageVersionSummary `json:"versions" jsonschema:"the page version history"`
+	NextCursor string               `json:"next_cursor,omitempty" jsonschema:"cursor for the next page of results, if available"`
+}
+
+func listPageVersions(client *confluence.Client) mcp.ToolHandlerFor[ListPageVersionsInput, ListPageVersionsOutput] {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, in ListPageVersionsInput) (*mcp.CallToolResult, ListPageVersionsOutput, error) {
+		result, err := client.ListPageVersions(ctx, confluence.ListPageVersionsInput{
+			PageID:     in.PageID,
+			BodyFormat: in.BodyFormat,
+			Sort:       in.Sort,
+			Limit:      clampVersionLimit(in.Limit, in.BodyFormat),
+			Cursor:     in.Cursor,
+		})
+		if err != nil {
+			return nil, ListPageVersionsOutput{}, fmt.Errorf("list versions of page %s: %w", in.PageID, err)
+		}
+
+		out := ListPageVersionsOutput{
+			Versions:   make([]PageVersionSummary, len(result.Results)),
+			NextCursor: nextCursor(result.Links.Next),
+		}
+		for i, version := range result.Results {
+			createdAt := version.CreatedAt
+			if createdAt == "" {
+				createdAt = version.When
+			}
+			out.Versions[i] = PageVersionSummary{
+				Number:    version.Number,
+				Message:   version.Message,
+				CreatedAt: createdAt,
+				AuthorID:  version.AuthorID,
+				MinorEdit: version.MinorEdit,
+			}
+			if version.Page != nil {
+				out.Versions[i].Title = version.Page.Title
+				out.Versions[i].Content = version.Page.Body.PlainText()
+			}
+		}
+		return nil, out, nil
+	}
 }
 
 // SearchPagesOutput is the output for the confluence_search_pages tool.
@@ -113,11 +200,13 @@ type SearchPagesOutput struct {
 func searchPages(client *confluence.Client) mcp.ToolHandlerFor[SearchPagesInput, SearchPagesOutput] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in SearchPagesInput) (*mcp.CallToolResult, SearchPagesOutput, error) {
 		result, err := client.SearchPages(ctx, confluence.SearchPagesInput{
-			SpaceID: in.SpaceID,
-			Title:   in.Title,
-			Status:  in.Status,
-			Limit:   clampLimit(in.Limit),
-			Cursor:  in.Cursor,
+			SpaceID:    in.SpaceID,
+			Title:      in.Title,
+			Status:     in.Status,
+			Sort:       in.Sort,
+			BodyFormat: in.BodyFormat,
+			Limit:      clampLimit(in.Limit),
+			Cursor:     in.Cursor,
 		})
 		if err != nil {
 			return nil, SearchPagesOutput{}, fmt.Errorf("search pages: %w", err)
@@ -134,9 +223,10 @@ func searchPages(client *confluence.Client) mcp.ToolHandlerFor[SearchPagesInput,
 	}
 }
 
-// ChildPageSummary is a compact view of a child page in a page hierarchy.
+// ChildPageSummary is a compact view of child content in a page hierarchy.
 type ChildPageSummary struct {
 	ID            string `json:"id" jsonschema:"the page ID"`
+	Type          string `json:"type,omitempty" jsonschema:"the child content type, such as page, database, whiteboard, embed, or folder"`
 	Title         string `json:"title,omitempty" jsonschema:"the page title"`
 	Status        string `json:"status,omitempty" jsonschema:"the page status (current, archived)"`
 	SpaceID       string `json:"space_id,omitempty" jsonschema:"the space ID"`
@@ -153,7 +243,7 @@ type GetPageChildrenInput struct {
 
 // GetPageChildrenOutput is the output for the confluence_get_page_children tool.
 type GetPageChildrenOutput struct {
-	Children   []ChildPageSummary `json:"children" jsonschema:"the direct child pages"`
+	Children   []ChildPageSummary `json:"children" jsonschema:"the direct child content"`
 	NextCursor string             `json:"next_cursor,omitempty" jsonschema:"cursor for the next page of results, if available"`
 }
 
@@ -176,6 +266,7 @@ func getPageChildren(client *confluence.Client) mcp.ToolHandlerFor[GetPageChildr
 		for i, child := range result.Results {
 			out.Children[i] = ChildPageSummary{
 				ID:            child.ID,
+				Type:          child.Type,
 				Title:         child.Title,
 				Status:        child.Status,
 				SpaceID:       child.SpaceID,
@@ -227,12 +318,13 @@ func getPageAncestors(client *confluence.Client) mcp.ToolHandlerFor[GetPageAnces
 
 // GetSpacePagesInput is the input for the confluence_get_space_pages tool.
 type GetSpacePagesInput struct {
-	SpaceID string   `json:"space_id" jsonschema:"the Confluence space ID whose pages to list"`
-	Title   string   `json:"title,omitempty" jsonschema:"filter by page title"`
-	Status  []string `json:"status,omitempty" jsonschema:"filter by statuses (current, archived, trashed, deleted)"`
-	Sort    string   `json:"sort,omitempty" jsonschema:"optional Confluence sort order, e.g. title or -modified-date"`
-	Limit   int      `json:"limit,omitempty" jsonschema:"maximum number of pages to return, defaults to 25, maximum 250"`
-	Cursor  string   `json:"cursor,omitempty" jsonschema:"pagination cursor for next page of results"`
+	SpaceID    string   `json:"space_id" jsonschema:"the Confluence space ID whose pages to list"`
+	Title      string   `json:"title,omitempty" jsonschema:"filter by page title"`
+	Status     []string `json:"status,omitempty" jsonschema:"filter by statuses (current, archived, trashed, deleted)"`
+	Sort       string   `json:"sort,omitempty" jsonschema:"optional Confluence sort order, e.g. title or -modified-date"`
+	BodyFormat string   `json:"body_format,omitempty" jsonschema:"optional body format to include (storage or atlas_doc_format)"`
+	Limit      int      `json:"limit,omitempty" jsonschema:"maximum number of pages to return, defaults to 25, maximum 250"`
+	Cursor     string   `json:"cursor,omitempty" jsonschema:"pagination cursor for next page of results"`
 }
 
 // GetSpacePagesOutput is the output for the confluence_get_space_pages tool.
@@ -244,12 +336,13 @@ type GetSpacePagesOutput struct {
 func getSpacePages(client *confluence.Client) mcp.ToolHandlerFor[GetSpacePagesInput, GetSpacePagesOutput] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in GetSpacePagesInput) (*mcp.CallToolResult, GetSpacePagesOutput, error) {
 		result, err := client.GetSpacePages(ctx, confluence.GetSpacePagesInput{
-			SpaceID: in.SpaceID,
-			Title:   in.Title,
-			Status:  in.Status,
-			Sort:    in.Sort,
-			Limit:   clampLimit(in.Limit),
-			Cursor:  in.Cursor,
+			SpaceID:    in.SpaceID,
+			Title:      in.Title,
+			Status:     in.Status,
+			Sort:       in.Sort,
+			BodyFormat: in.BodyFormat,
+			Limit:      clampLimit(in.Limit),
+			Cursor:     in.Cursor,
 		})
 		if err != nil {
 			return nil, GetSpacePagesOutput{}, fmt.Errorf("get pages in space %s: %w", in.SpaceID, err)
@@ -346,7 +439,7 @@ func searchCQL(client *confluence.Client) mcp.ToolHandlerFor[SearchCQLInput, Sea
 			CQLContext:            in.CQLContext,
 			Expand:                in.Expand,
 			Cursor:                in.Cursor,
-			Limit:                 clampLimit(in.Limit),
+			Limit:                 clampSearchLimit(in.Limit, in.Expand),
 			Start:                 in.Start,
 			IncludeArchivedSpaces: in.IncludeArchivedSpaces,
 			ExcludeCurrentSpaces:  in.ExcludeCurrentSpaces,
@@ -451,17 +544,27 @@ func listSpaces(client *confluence.Client) mcp.ToolHandlerFor[ListSpacesInput, L
 // GetPageLabelsInput is the input for the confluence_get_page_labels tool.
 type GetPageLabelsInput struct {
 	PageID string `json:"page_id" jsonschema:"the Confluence page ID"`
+	Prefix string `json:"prefix,omitempty" jsonschema:"optional label prefix filter"`
+	Sort   string `json:"sort,omitempty" jsonschema:"optional label sort order"`
 	Limit  int    `json:"limit,omitempty" jsonschema:"maximum number of labels to return, defaults to 25, maximum 250"`
+	Cursor string `json:"cursor,omitempty" jsonschema:"pagination cursor for the next page of results"`
 }
 
 // GetPageLabelsOutput is the output for the confluence_get_page_labels tool.
 type GetPageLabelsOutput struct {
-	Labels []string `json:"labels" jsonschema:"the label names attached to the page"`
+	Labels     []string `json:"labels" jsonschema:"the label names attached to the page"`
+	NextCursor string   `json:"next_cursor,omitempty" jsonschema:"cursor for the next page of results, if available"`
 }
 
 func getPageLabels(client *confluence.Client) mcp.ToolHandlerFor[GetPageLabelsInput, GetPageLabelsOutput] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in GetPageLabelsInput) (*mcp.CallToolResult, GetPageLabelsOutput, error) {
-		result, err := client.GetPageLabels(ctx, in.PageID, clampLimit(in.Limit))
+		result, err := client.GetPageLabels(ctx, confluence.GetPageLabelsInput{
+			PageID: in.PageID,
+			Prefix: in.Prefix,
+			Sort:   in.Sort,
+			Limit:  clampLimit(in.Limit),
+			Cursor: in.Cursor,
+		})
 		if err != nil {
 			return nil, GetPageLabelsOutput{}, fmt.Errorf("get page labels %s: %w", in.PageID, err)
 		}
@@ -470,7 +573,7 @@ func getPageLabels(client *confluence.Client) mcp.ToolHandlerFor[GetPageLabelsIn
 		for i, label := range result.Results {
 			labels[i] = label.Name
 		}
-		return nil, GetPageLabelsOutput{Labels: labels}, nil
+		return nil, GetPageLabelsOutput{Labels: labels, NextCursor: nextCursor(result.Links.Next)}, nil
 	}
 }
 
@@ -646,42 +749,95 @@ func listCommentChildren(client *confluence.Client) mcp.ToolHandlerFor[ListComme
 
 // GetPageAttachmentsInput is the input for the confluence_get_page_attachments tool.
 type GetPageAttachmentsInput struct {
-	PageID string `json:"page_id" jsonschema:"the Confluence page ID"`
-	Limit  int    `json:"limit,omitempty" jsonschema:"maximum number of attachments to return, defaults to 25, maximum 250"`
+	PageID    string   `json:"page_id" jsonschema:"the Confluence page ID"`
+	Sort      string   `json:"sort,omitempty" jsonschema:"optional attachment sort order"`
+	Status    []string `json:"status,omitempty" jsonschema:"optional attachment statuses to include"`
+	MediaType string   `json:"media_type,omitempty" jsonschema:"filter by MIME type"`
+	Filename  string   `json:"filename,omitempty" jsonschema:"filter by filename"`
+	Limit     int      `json:"limit,omitempty" jsonschema:"maximum number of attachments to return, defaults to 25, maximum 250"`
+	Cursor    string   `json:"cursor,omitempty" jsonschema:"pagination cursor for the next page of results"`
 }
 
 // AttachmentSummary is a summary of a Confluence attachment.
 type AttachmentSummary struct {
 	ID          string `json:"id" jsonschema:"the attachment ID"`
+	PageID      string `json:"page_id,omitempty" jsonschema:"the page containing the attachment"`
+	Status      string `json:"status,omitempty" jsonschema:"the attachment status"`
 	Title       string `json:"title,omitempty" jsonschema:"the attachment filename"`
 	MediaType   string `json:"media_type,omitempty" jsonschema:"the attachment MIME type"`
 	FileSize    int64  `json:"file_size,omitempty" jsonschema:"the attachment file size in bytes"`
+	Comment     string `json:"comment,omitempty" jsonschema:"the attachment comment"`
+	Version     int    `json:"version,omitempty" jsonschema:"the attachment version number"`
+	WebURL      string `json:"web_url,omitempty" jsonschema:"the URL to view the attachment"`
 	DownloadURL string `json:"download_url,omitempty" jsonschema:"the URL to download the attachment"`
+}
+
+func attachmentToSummary(att *confluence.Attachment) AttachmentSummary {
+	downloadURL := att.DownloadURL
+	if downloadURL == "" {
+		downloadURL = att.Links.Download
+	}
+	summary := AttachmentSummary{
+		ID:          att.ID,
+		PageID:      att.PageID,
+		Status:      att.Status,
+		Title:       att.Title,
+		MediaType:   att.MediaType,
+		FileSize:    att.FileSize,
+		Comment:     att.Comment,
+		WebURL:      att.Links.WebUI,
+		DownloadURL: downloadURL,
+	}
+	if att.Version != nil {
+		summary.Version = att.Version.Number
+	}
+	return summary
 }
 
 // GetPageAttachmentsOutput is the output for the confluence_get_page_attachments tool.
 type GetPageAttachmentsOutput struct {
 	Attachments []AttachmentSummary `json:"attachments" jsonschema:"the attachments on the page"`
+	NextCursor  string              `json:"next_cursor,omitempty" jsonschema:"cursor for the next page of results, if available"`
 }
 
 func getPageAttachments(client *confluence.Client) mcp.ToolHandlerFor[GetPageAttachmentsInput, GetPageAttachmentsOutput] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in GetPageAttachmentsInput) (*mcp.CallToolResult, GetPageAttachmentsOutput, error) {
-		result, err := client.GetPageAttachments(ctx, in.PageID, clampLimit(in.Limit))
+		result, err := client.GetPageAttachments(ctx, confluence.GetPageAttachmentsInput{
+			PageID:    in.PageID,
+			Sort:      in.Sort,
+			Status:    in.Status,
+			MediaType: in.MediaType,
+			Filename:  in.Filename,
+			Limit:     clampLimit(in.Limit),
+			Cursor:    in.Cursor,
+		})
 		if err != nil {
 			return nil, GetPageAttachmentsOutput{}, fmt.Errorf("get page attachments %s: %w", in.PageID, err)
 		}
 
 		attachments := make([]AttachmentSummary, len(result.Results))
-		for i, att := range result.Results {
-			attachments[i] = AttachmentSummary{
-				ID:          att.ID,
-				Title:       att.Title,
-				MediaType:   att.MediaType,
-				FileSize:    att.FileSize,
-				DownloadURL: att.DownloadURL,
-			}
+		for i := range result.Results {
+			attachments[i] = attachmentToSummary(&result.Results[i])
 		}
-		return nil, GetPageAttachmentsOutput{Attachments: attachments}, nil
+		return nil, GetPageAttachmentsOutput{
+			Attachments: attachments,
+			NextCursor:  nextCursor(result.Links.Next),
+		}, nil
+	}
+}
+
+// GetAttachmentInput is the input for confluence_get_attachment.
+type GetAttachmentInput struct {
+	AttachmentID string `json:"attachment_id" jsonschema:"the Confluence attachment ID"`
+}
+
+func getAttachment(client *confluence.Client) mcp.ToolHandlerFor[GetAttachmentInput, AttachmentSummary] {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, in GetAttachmentInput) (*mcp.CallToolResult, AttachmentSummary, error) {
+		attachment, err := client.GetAttachment(ctx, in.AttachmentID)
+		if err != nil {
+			return nil, AttachmentSummary{}, fmt.Errorf("get attachment %s: %w", in.AttachmentID, err)
+		}
+		return nil, attachmentToSummary(attachment), nil
 	}
 }
 
@@ -725,7 +881,7 @@ func registerReadTools(s *mcp.Server, client *confluence.Client) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "confluence_get_page_children",
-		Description: "List the direct child pages of a Confluence page",
+		Description: "List direct child content of a Confluence page",
 		Annotations: readOnlyHint,
 	}, getPageChildren(client))
 
@@ -734,6 +890,12 @@ func registerReadTools(s *mcp.Server, client *confluence.Client) {
 		Description: "List the ancestors of a Confluence page, from the root downwards",
 		Annotations: readOnlyHint,
 	}, getPageAncestors(client))
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "confluence_list_page_versions",
+		Description: "List the version history of a Confluence page",
+		Annotations: readOnlyHint,
+	}, listPageVersions(client))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "confluence_get_space_pages",
@@ -788,6 +950,12 @@ func registerReadTools(s *mcp.Server, client *confluence.Client) {
 		Description: "Get attachments on a Confluence page",
 		Annotations: readOnlyHint,
 	}, getPageAttachments(client))
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "confluence_get_attachment",
+		Description: "Get metadata for a Confluence attachment",
+		Annotations: readOnlyHint,
+	}, getAttachment(client))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "confluence_download_attachment",

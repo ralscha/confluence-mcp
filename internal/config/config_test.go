@@ -110,6 +110,19 @@ func TestLoad_InsecureBaseURL(t *testing.T) {
 	}
 }
 
+func TestLoad_RejectsBaseURLQuery(t *testing.T) {
+	os.Clearenv()
+
+	_, err := Load([]string{
+		"--confluence-base-url=https://test.atlassian.net?tenant=other",
+		"--confluence-email=test@example.com",
+		"--confluence-api-token=test-token",
+	})
+	if err == nil {
+		t.Fatal("expected error for a base URL with a query, got nil")
+	}
+}
+
 func TestLoad_VersionRequested(t *testing.T) {
 	os.Clearenv()
 
@@ -159,6 +172,21 @@ func TestLoad_InvalidAllowedOrigin(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "allowed origin") {
 		t.Errorf("error should mention the allowed origin: %v", err)
+	}
+}
+
+func TestLoad_RejectsNonOriginURL(t *testing.T) {
+	os.Clearenv()
+
+	_, err := Load([]string{
+		"--confluence-base-url=https://test.atlassian.net",
+		"--confluence-email=test@example.com",
+		"--confluence-api-token=test-token",
+		"--transport=http",
+		"--allowed-origins=https://example.com/path",
+	})
+	if err == nil {
+		t.Fatal("expected error for an allowed origin with a path, got nil")
 	}
 }
 

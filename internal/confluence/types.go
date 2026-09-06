@@ -42,13 +42,29 @@ type Page struct {
 
 // Version represents the version information of a page.
 type Version struct {
-	Number    int    `json:"number,omitempty"`
-	Message   string `json:"message,omitempty"`
-	When      string `json:"when,omitempty"`
-	CreatedAt string `json:"createdAt,omitempty"`
-	MinorEdit bool   `json:"minorEdit,omitempty"`
-	AuthorID  string `json:"authorId,omitempty"`
-	By        *User  `json:"by,omitempty"`
+	Number    int          `json:"number,omitempty"`
+	Message   string       `json:"message,omitempty"`
+	When      string       `json:"when,omitempty"`
+	CreatedAt string       `json:"createdAt,omitempty"`
+	MinorEdit bool         `json:"minorEdit,omitempty"`
+	AuthorID  string       `json:"authorId,omitempty"`
+	By        *User        `json:"by,omitempty"`
+	Page      *VersionPage `json:"page,omitempty"`
+}
+
+// VersionPage contains the page snapshot optionally embedded in a page
+// version listing when body-format is requested.
+type VersionPage struct {
+	ID    string    `json:"id,omitempty"`
+	Title string    `json:"title,omitempty"`
+	Body  *PageBody `json:"body,omitempty"`
+}
+
+// PageVersionSearchResult is the response body of
+// GET /wiki/api/v2/pages/{id}/versions.
+type PageVersionSearchResult struct {
+	Results []Version       `json:"results"`
+	Links   PaginationLinks `json:"_links"`
 }
 
 // PageBody holds the content of a page in various formats.
@@ -75,17 +91,20 @@ type PageSearchResult struct {
 	Links   PaginationLinks `json:"_links"`
 }
 
-// ChildPage is a direct child of a page, as returned by
-// GET /wiki/api/v2/pages/{id}/children.
+// ChildPage is direct child content of a page, as returned by
+// GET /wiki/api/v2/pages/{id}/direct-children. The historical name is kept to
+// avoid churn in the internal client API.
 type ChildPage struct {
 	ID            string `json:"id,omitempty"`
+	Type          string `json:"type,omitempty"`
 	Status        string `json:"status,omitempty"`
 	Title         string `json:"title,omitempty"`
 	SpaceID       string `json:"spaceId,omitempty"`
 	ChildPosition int    `json:"childPosition,omitempty"`
 }
 
-// ChildPageSearchResult is the response body of GET /wiki/api/v2/pages/{id}/children.
+// ChildPageSearchResult is the response body of
+// GET /wiki/api/v2/pages/{id}/direct-children.
 type ChildPageSearchResult struct {
 	Results []ChildPage     `json:"results"`
 	Links   PaginationLinks `json:"_links"`
@@ -210,14 +229,22 @@ type LabelSearchResult struct {
 
 // Attachment represents a Confluence attachment.
 type Attachment struct {
-	ID          string   `json:"id,omitempty"`
-	Status      string   `json:"status,omitempty"`
-	Title       string   `json:"title,omitempty"`
-	MediaType   string   `json:"mediaType,omitempty"`
-	FileSize    int64    `json:"fileSize,omitempty"`
-	Comment     string   `json:"comment,omitempty"`
-	Version     *Version `json:"version,omitempty"`
-	DownloadURL string   `json:"downloadLink,omitempty"`
+	ID          string          `json:"id,omitempty"`
+	Status      string          `json:"status,omitempty"`
+	Title       string          `json:"title,omitempty"`
+	PageID      string          `json:"pageId,omitempty"`
+	MediaType   string          `json:"mediaType,omitempty"`
+	FileSize    int64           `json:"fileSize,omitempty"`
+	Comment     string          `json:"comment,omitempty"`
+	Version     *Version        `json:"version,omitempty"`
+	DownloadURL string          `json:"downloadLink,omitempty"`
+	Links       AttachmentLinks `json:"_links"`
+}
+
+// AttachmentLinks contains URLs returned for an attachment.
+type AttachmentLinks struct {
+	WebUI    string `json:"webui,omitempty"`
+	Download string `json:"download,omitempty"`
 }
 
 // AttachmentSearchResult is the response body of GET /wiki/api/v2/pages/{id}/attachments.

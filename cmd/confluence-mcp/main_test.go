@@ -27,9 +27,10 @@ func TestOriginAllowed(t *testing.T) {
 	allowed := []string{"https://mcp.example.com"}
 
 	tests := []struct {
-		name   string
-		origin string
-		want   bool
+		name    string
+		origin  string
+		allowed []string
+		want    bool
 	}{
 		{name: "configured origin", origin: "https://mcp.example.com", want: true},
 		{name: "localhost", origin: "http://localhost:3000", want: true},
@@ -39,11 +40,18 @@ func TestOriginAllowed(t *testing.T) {
 		{name: "rebinding host", origin: "http://attacker.127.0.0.1.nip.io", want: false},
 		{name: "unconfigured scheme mismatch", origin: "http://mcp.example.com", want: false},
 		{name: "not a URL", origin: "not a url", want: false},
+		{name: "non-HTTP loopback", origin: "file://localhost", want: false},
+		{name: "loopback with path", origin: "http://localhost/path", want: false},
+		{name: "configured invalid origin", origin: "file://localhost", allowed: []string{"file://localhost"}, want: false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := originAllowed(tt.origin, allowed); got != tt.want {
+			configured := tt.allowed
+			if configured == nil {
+				configured = allowed
+			}
+			if got := originAllowed(tt.origin, configured); got != tt.want {
 				t.Errorf("originAllowed(%q) = %v, want %v", tt.origin, got, tt.want)
 			}
 		})

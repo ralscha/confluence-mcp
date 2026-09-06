@@ -13,13 +13,16 @@ import (
 // nonDestructiveHint is shared by write tools that never delete data.
 var nonDestructiveHint = &mcp.ToolAnnotations{DestructiveHint: new(false)}
 
+// destructiveHint makes destructive write behavior explicit to MCP hosts.
+var destructiveHint = &mcp.ToolAnnotations{DestructiveHint: new(true)}
+
 // CreatePageInput is the input for the confluence_create_page tool.
 type CreatePageInput struct {
 	SpaceID  string `json:"space_id" jsonschema:"the space ID to create the page in"`
 	Title    string `json:"title" jsonschema:"the page title"`
 	ParentID string `json:"parent_id,omitempty" jsonschema:"optional parent page ID"`
-	Content  string `json:"content,omitempty" jsonschema:"the page content as plain text or storage format"`
-	BodyType string `json:"body_type,omitempty" jsonschema:"content format type: storage (default) or atlas_doc_format"`
+	Content  string `json:"content,omitempty" jsonschema:"the page content"`
+	BodyType string `json:"body_type,omitempty" jsonschema:"content format: storage (default), atlas_doc_format, or plain_text"`
 }
 
 // CreatedPage describes a newly created page.
@@ -45,14 +48,14 @@ func createPage(client *confluence.Client) mcp.ToolHandlerFor[CreatePageInput, C
 }
 
 // UpdatePageInput is the input for the confluence_update_page tool. Title and
-// Content are optional; only non-empty fields are updated. At least one must
-// be provided. Version must be the current version number of the page.
+// Content are optional; only provided fields are updated. At least one must
+// be provided. Version must be the current version number when content changes.
 type UpdatePageInput struct {
 	PageID      string  `json:"page_id" jsonschema:"the Confluence page ID to update"`
 	Title       *string `json:"title,omitempty" jsonschema:"new title for the page"`
-	Content     *string `json:"content,omitempty" jsonschema:"new content for the page, as plain text or storage format"`
-	BodyType    string  `json:"body_type,omitempty" jsonschema:"content format type: storage (default) or atlas_doc_format"`
-	Version     int     `json:"version" jsonschema:"the current version number of the page (required)"`
+	Content     *string `json:"content,omitempty" jsonschema:"new content for the page"`
+	BodyType    string  `json:"body_type,omitempty" jsonschema:"content format: storage (default), atlas_doc_format, or plain_text"`
+	Version     int     `json:"version,omitempty" jsonschema:"the current page version number; required when changing content"`
 	VersionNote string  `json:"version_note,omitempty" jsonschema:"optional version message describing the change"`
 }
 
@@ -127,12 +130,34 @@ func addPageLabel(client *confluence.Client) mcp.ToolHandlerFor[AddPageLabelInpu
 	}
 }
 
+// RemovePageLabelInput is the input for confluence_remove_page_label.
+type RemovePageLabelInput struct {
+	PageID    string `json:"page_id" jsonschema:"the Confluence page ID"`
+	LabelName string `json:"label_name" jsonschema:"the label name to remove"`
+}
+
+// RemovePageLabelOutput confirms removing a label from a page.
+type RemovePageLabelOutput struct {
+	PageID    string `json:"page_id" jsonschema:"the page ID"`
+	LabelName string `json:"label_name" jsonschema:"the label name removed"`
+	Removed   bool   `json:"removed" jsonschema:"whether the label was removed successfully"`
+}
+
+func removePageLabel(client *confluence.Client) mcp.ToolHandlerFor[RemovePageLabelInput, RemovePageLabelOutput] {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, in RemovePageLabelInput) (*mcp.CallToolResult, RemovePageLabelOutput, error) {
+		if err := client.RemovePageLabel(ctx, in.PageID, in.LabelName); err != nil {
+			return nil, RemovePageLabelOutput{}, fmt.Errorf("remove label %s from page %s: %w", in.LabelName, in.PageID, err)
+		}
+		return nil, RemovePageLabelOutput{PageID: in.PageID, LabelName: in.LabelName, Removed: true}, nil
+	}
+}
+
 // CreateFooterCommentInput is the input for the confluence_create_footer_comment tool.
 type CreateFooterCommentInput struct {
 	PageID          string `json:"page_id,omitempty" jsonschema:"the Confluence page ID for a top-level comment"`
 	ParentCommentID string `json:"parent_comment_id,omitempty" jsonschema:"the parent footer comment ID for a reply"`
-	Content         string `json:"content" jsonschema:"the comment body as plain text or storage format"`
-	BodyType        string `json:"body_type,omitempty" jsonschema:"content format type: storage (default) or atlas_doc_format"`
+	Content         string `json:"content" jsonschema:"the comment body"`
+	BodyType        string `json:"body_type,omitempty" jsonschema:"content format: storage (default), atlas_doc_format, or plain_text"`
 }
 
 // CreatedFooterComment describes a newly created footer comment.
@@ -164,8 +189,8 @@ func createFooterComment(client *confluence.Client) mcp.ToolHandlerFor[CreateFoo
 // UpdateFooterCommentInput is the input for the confluence_update_footer_comment tool.
 type UpdateFooterCommentInput struct {
 	CommentID   string `json:"comment_id" jsonschema:"the Confluence footer comment ID to update"`
-	Content     string `json:"content" jsonschema:"new comment body, as plain text or storage format"`
-	BodyType    string `json:"body_type,omitempty" jsonschema:"content format type: storage (default) or atlas_doc_format"`
+	Content     string `json:"content" jsonschema:"new comment body"`
+	BodyType    string `json:"body_type,omitempty" jsonschema:"content format: storage (default), atlas_doc_format, or plain_text"`
 	Version     int    `json:"version" jsonschema:"the current version number of the comment (required)"`
 	VersionNote string `json:"version_note,omitempty" jsonschema:"optional version message describing the change"`
 }
@@ -283,6 +308,7 @@ func registerWriteTools(s *mcp.Server, client *confluence.Client) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "confluence_delete_page",
 		Description: "Delete a Confluence page",
+		Annotations: destructiveHint,
 	}, deletePage(client))
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -290,6 +316,12 @@ func registerWriteTools(s *mcp.Server, client *confluence.Client) {
 		Description: "Add a label to a Confluence page",
 		Annotations: nonDestructiveHint,
 	}, addPageLabel(client))
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "confluence_remove_page_label",
+		Description: "Remove a label from a Confluence page",
+		Annotations: destructiveHint,
+	}, removePageLabel(client))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "confluence_create_footer_comment",
@@ -306,6 +338,7 @@ func registerWriteTools(s *mcp.Server, client *confluence.Client) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "confluence_delete_footer_comment",
 		Description: "Delete a Confluence footer comment",
+		Annotations: destructiveHint,
 	}, deleteFooterComment(client))
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -317,5 +350,6 @@ func registerWriteTools(s *mcp.Server, client *confluence.Client) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "confluence_delete_attachment",
 		Description: "Delete a Confluence attachment",
+		Annotations: destructiveHint,
 	}, deleteAttachment(client))
 }

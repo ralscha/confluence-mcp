@@ -32,22 +32,26 @@ func TestClient_SearchPages(t *testing.T) {
 	})
 
 	result, err := client.SearchPages(context.Background(), SearchPagesInput{
-		SpaceID: "9",
-		Title:   "Road",
-		Status:  "current",
-		Limit:   10,
-		Cursor:  "abc",
+		SpaceID:    "9",
+		Title:      "Road",
+		Status:     "current",
+		Sort:       "-modified-date",
+		BodyFormat: "storage",
+		Limit:      10,
+		Cursor:     "abc",
 	})
 	if err != nil {
 		t.Fatalf("SearchPages failed: %v", err)
 	}
 
 	for key, want := range map[string]string{
-		"space-id": "9",
-		"title":    "Road",
-		"status":   "current",
-		"limit":    "10",
-		"cursor":   "abc",
+		"space-id":    "9",
+		"title":       "Road",
+		"status":      "current",
+		"sort":        "-modified-date",
+		"body-format": "storage",
+		"limit":       "10",
+		"cursor":      "abc",
 	} {
 		if got := gotQuery.Get(key); got != want {
 			t.Errorf("query %s = %q, want %q", key, got, want)
@@ -98,7 +102,7 @@ func TestClient_CreatePage(t *testing.T) {
 		t.Errorf("parentId = %v, want %v", got, want)
 	}
 
-	storage, ok := gotBody["body"].(map[string]any)["storage"].(map[string]any)
+	storage, ok := gotBody["body"].(map[string]any)
 	if !ok {
 		t.Fatalf("body.storage missing in %v", gotBody)
 	}
@@ -124,8 +128,10 @@ func TestClient_UpdatePage(t *testing.T) {
 	})
 
 	title := "Updated"
+	content := "<p>Updated body</p>"
 	page, err := client.UpdatePage(context.Background(), "123", UpdatePageInput{
 		Title:       &title,
+		Body:        &content,
 		Version:     3,
 		VersionNote: "tidy up",
 	})
@@ -144,7 +150,7 @@ func TestClient_UpdatePage(t *testing.T) {
 	if !ok {
 		t.Fatalf("version missing in %v", gotBody)
 	}
-	if got, want := version["number"], float64(3); got != want {
+	if got, want := version["number"], float64(4); got != want {
 		t.Errorf("version number = %v, want %v", got, want)
 	}
 	if got, want := version["message"], "tidy up"; got != want {
@@ -159,6 +165,92 @@ func TestClient_UpdatePageRequiresTitleOrBody(t *testing.T) {
 
 	if _, err := client.UpdatePage(context.Background(), "123", UpdatePageInput{Version: 3}); err == nil {
 		t.Fatal("expected error when neither title nor body is set, got nil")
+	}
+}
+
+func TestClient_UpdatePageTitleOnly(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.URL.Path, "/wiki/api/v2/pages/123/title"; got != want {
+			t.Errorf("path = %q, want %q", got, want)
+		}
+		var body map[string]any
+		decodeJSONBody(t, r, &body)
+		if got, want := body["title"], "Renamed"; got != want {
+			t.Errorf("title = %v, want %v", got, want)
+		}
+		if _, exists := body["version"]; exists {
+			t.Error("title-only update unexpectedly sent a version")
+		}
+		writeJSON(w, `{"id":"123","title":"Renamed","version":{"number":4}}`)
+	})
+
+	title := "Renamed"
+	if _, err := client.UpdatePage(context.Background(), "123", UpdatePageInput{Title: &title}); err != nil {
+		t.Fatalf("UpdatePage failed: %v", err)
+	}
+}
+
+func TestClient_UpdatePageContentOnlyFetchesTitle(t *testing.T) {
+	requestCount := 0
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/wiki/api/v2/pages/123":
+			writeJSON(w, `{"id":"123","title":"Existing title","version":{"number":3}}`)
+		case r.Method == http.MethodPut && r.URL.Path == "/wiki/api/v2/pages/123":
+			var body map[string]any
+			decodeJSONBody(t, r, &body)
+			if got, want := body["title"], "Existing title"; got != want {
+				t.Errorf("title = %v, want %v", got, want)
+			}
+			version := body["version"].(map[string]any)
+			if got, want := version["number"], float64(4); got != want {
+				t.Errorf("version = %v, want %v", got, want)
+			}
+			writeJSON(w, `{"id":"123","title":"Existing title","version":{"number":4}}`)
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	})
+
+	content := "<p>New content</p>"
+	if _, err := client.UpdatePage(context.Background(), "123", UpdatePageInput{Body: &content, Version: 3}); err != nil {
+		t.Fatalf("UpdatePage failed: %v", err)
+	}
+	if got, want := requestCount, 2; got != want {
+		t.Errorf("request count = %d, want %d", got, want)
+	}
+}
+
+func TestClient_ListPageVersions(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.URL.Path, "/wiki/api/v2/pages/123/versions"; got != want {
+			t.Errorf("path = %q, want %q", got, want)
+		}
+		for key, want := range map[string]string{
+			"body-format": "storage",
+			"sort":        "-modified-date",
+			"limit":       "20",
+			"cursor":      "next",
+		} {
+			if got := r.URL.Query().Get(key); got != want {
+				t.Errorf("query %s = %q, want %q", key, got, want)
+			}
+		}
+		writeJSON(w, `{
+			"results":[{"number":3,"message":"release","createdAt":"2026-01-02T03:04:05Z","authorId":"acct","page":{"id":"123","title":"Roadmap","body":{"storage":{"value":"<p>Plan</p>"}}}}],
+			"_links":{"next":"/wiki/api/v2/pages/123/versions?cursor=more"}
+		}`)
+	})
+
+	result, err := client.ListPageVersions(context.Background(), ListPageVersionsInput{
+		PageID: "123", BodyFormat: "storage", Sort: "-modified-date", Limit: 20, Cursor: "next",
+	})
+	if err != nil {
+		t.Fatalf("ListPageVersions failed: %v", err)
+	}
+	if got, want := result.Results[0].Page.Body.PlainText(), "Plan"; got != want {
+		t.Errorf("content = %q, want %q", got, want)
 	}
 }
 
@@ -186,10 +278,13 @@ func TestClient_GetPageLabels(t *testing.T) {
 		if got, want := r.URL.Query().Get("limit"), "50"; got != want {
 			t.Errorf("limit = %q, want %q", got, want)
 		}
-		writeJSON(w, `{"results": [{"id": "1", "name": "release"}, {"id": "2", "name": "draft"}]}`)
+		if got, want := r.URL.Query().Get("cursor"), "next"; got != want {
+			t.Errorf("cursor = %q, want %q", got, want)
+		}
+		writeJSON(w, `{"results": [{"id": "1", "name": "release"}, {"id": "2", "name": "draft"}], "_links":{"next":"/wiki/api/v2/pages/123/labels?cursor=more"}}`)
 	})
 
-	result, err := client.GetPageLabels(context.Background(), "123", 50)
+	result, err := client.GetPageLabels(context.Background(), GetPageLabelsInput{PageID: "123", Limit: 50, Cursor: "next"})
 	if err != nil {
 		t.Fatalf("GetPageLabels failed: %v", err)
 	}
@@ -198,6 +293,25 @@ func TestClient_GetPageLabels(t *testing.T) {
 	}
 	if got, want := result.Results[0].Name, "release"; got != want {
 		t.Errorf("label name = %q, want %q", got, want)
+	}
+}
+
+func TestClient_RemovePageLabel(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.Method, http.MethodDelete; got != want {
+			t.Errorf("method = %q, want %q", got, want)
+		}
+		if got, want := r.URL.Path, "/wiki/rest/api/content/123/label"; got != want {
+			t.Errorf("path = %q, want %q", got, want)
+		}
+		if got, want := r.URL.Query().Get("name"), "team/roadmap"; got != want {
+			t.Errorf("label = %q, want %q", got, want)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	if err := client.RemovePageLabel(context.Background(), "123", "team/roadmap"); err != nil {
+		t.Fatalf("RemovePageLabel failed: %v", err)
 	}
 }
 
@@ -230,7 +344,7 @@ func TestClient_AddPageLabel(t *testing.T) {
 
 func TestClient_GetPageChildren(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if got, want := r.URL.Path, "/wiki/api/v2/pages/123/children"; got != want {
+		if got, want := r.URL.Path, "/wiki/api/v2/pages/123/direct-children"; got != want {
 			t.Errorf("path = %q, want %q", got, want)
 		}
 		query := r.URL.Query()
@@ -242,9 +356,9 @@ func TestClient_GetPageChildren(t *testing.T) {
 		}
 		writeJSON(w, `{
 			"results": [
-				{"id": "456", "status": "current", "title": "Child", "spaceId": "9", "childPosition": 1}
+				{"id": "456", "type": "page", "status": "current", "title": "Child", "spaceId": "9", "childPosition": 1}
 			],
-			"_links": {"next": "/wiki/api/v2/pages/123/children?cursor=more"}
+			"_links": {"next": "/wiki/api/v2/pages/123/direct-children?cursor=more"}
 		}`)
 	})
 
@@ -264,6 +378,9 @@ func TestClient_GetPageChildren(t *testing.T) {
 	}
 	if got, want := result.Results[0].ChildPosition, 1; got != want {
 		t.Errorf("child position = %d, want %d", got, want)
+	}
+	if got, want := result.Results[0].Type, "page"; got != want {
+		t.Errorf("child type = %q, want %q", got, want)
 	}
 }
 
@@ -301,12 +418,13 @@ func TestClient_GetSpacePages(t *testing.T) {
 	})
 
 	result, err := client.GetSpacePages(context.Background(), GetSpacePagesInput{
-		SpaceID: "9",
-		Title:   "Road",
-		Status:  []string{"current", "archived"},
-		Sort:    "title",
-		Limit:   25,
-		Cursor:  "abc",
+		SpaceID:    "9",
+		Title:      "Road",
+		Status:     []string{"current", "archived"},
+		Sort:       "title",
+		BodyFormat: "storage",
+		Limit:      25,
+		Cursor:     "abc",
 	})
 	if err != nil {
 		t.Fatalf("GetSpacePages failed: %v", err)
@@ -319,6 +437,9 @@ func TestClient_GetSpacePages(t *testing.T) {
 	}
 	if got, want := gotQuery.Get("sort"), "title"; got != want {
 		t.Errorf("sort = %q, want %q", got, want)
+	}
+	if got, want := gotQuery.Get("body-format"), "storage"; got != want {
+		t.Errorf("body-format = %q, want %q", got, want)
 	}
 }
 

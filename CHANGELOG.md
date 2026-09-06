@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Page-version history and attachment-metadata tools.
+- Attachment and label pagination/filter parameters, plus page-list body and
+  sort options.
+- Page-label removal and explicit `plain_text` write support.
+
+### Fixed
+
+- Use the documented v2 page write-body shape and increment content versions
+  correctly.
+- Use supported v1 routes for attachment upload/download.
+- Resolve space keys through the v2 space listing endpoint instead of passing
+  them to the ID-only endpoint.
+- Extract readable text from Atlas Document Format content.
+- Replace the deprecated page-only children endpoint with the direct-children
+  endpoint, which also returns databases, whiteboards, embeds, and folders.
+- Clamp CQL export-view searches to Atlassian's lower result limit.
+- Reject malformed base URLs and browser-origin allow-list entries early.
+
+### Changed
+
+- Mark destructive tools explicitly for MCP hosts and document API-specific
+  result limits.
+
 ## [1.1.0]
 
 ### Added
