@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"log"
 	"net"
@@ -33,6 +34,9 @@ func main() {
 
 func run() error {
 	cfg, err := config.Load(os.Args[1:])
+	if errors.Is(err, flag.ErrHelp) {
+		return nil
+	}
 	if errors.Is(err, config.ErrVersionRequested) {
 		_, _ = fmt.Fprintf(os.Stdout, "confluence-mcp %s\n", version.Version)
 		return nil

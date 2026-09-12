@@ -2,8 +2,11 @@ package confluence
 
 import (
 	"encoding/json"
+	"encoding/xml"
+	"errors"
 	"fmt"
 	"html"
+	"io"
 	"regexp"
 	"strings"
 )
@@ -85,6 +88,8 @@ func normalizePlainText(text string) string {
 
 // plainTextToStorage wraps plain text in minimal storage format markup.
 func plainTextToStorage(text string) string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
 	// Escape HTML special characters
 	text = strings.ReplaceAll(text, "&", "&amp;")
 	text = strings.ReplaceAll(text, "<", "&lt;")
@@ -121,16 +126,63 @@ type bodyWrite struct {
 func bodyForWrite(content, bodyType string) (bodyWrite, error) {
 	switch bodyType {
 	case "", bodyTypeStorage:
+		if strings.TrimSpace(content) == "" {
+			content = "<p></p>"
+		}
+		if err := validateStorage(content); err != nil {
+			return bodyWrite{}, err
+		}
 		return bodyWrite{Representation: bodyTypeStorage, Value: content}, nil
 	case bodyTypePlainText:
-		return bodyWrite{Representation: bodyTypeStorage, Value: plainTextToStorage(content)}, nil
+		value := plainTextToStorage(content)
+		if err := validateStorage(value); err != nil {
+			return bodyWrite{}, err
+		}
+		return bodyWrite{Representation: bodyTypeStorage, Value: value}, nil
 	case bodyTypeAtlasDocFormat:
-		if !json.Valid([]byte(content)) {
-			return bodyWrite{}, fmt.Errorf("confluence: atlas_doc_format content must be valid JSON")
+		var doc struct {
+			Type    string            `json:"type"`
+			Version int               `json:"version"`
+			Content []json.RawMessage `json:"content"`
+		}
+		if err := json.Unmarshal([]byte(content), &doc); err != nil {
+			return bodyWrite{}, fmt.Errorf("confluence: atlas_doc_format content must be a JSON document: %w", err)
+		}
+		if doc.Type != "doc" || doc.Version != 1 || doc.Content == nil {
+			return bodyWrite{}, fmt.Errorf("confluence: atlas_doc_format requires type doc, version 1, and a content array")
 		}
 		return bodyWrite{Representation: bodyTypeAtlasDocFormat, Value: content}, nil
 	default:
 		return bodyWrite{}, fmt.Errorf("confluence: unsupported body type %q (want storage, atlas_doc_format, or plain_text)", bodyType)
+	}
+}
+
+// validateStorage checks XHTML syntax without rewriting markup. Confluence's
+// ac:/ri: elements, HTML entities, and macro CDATA bodies are preserved verbatim.
+// The API remains responsible for validating supported elements and macros.
+func validateStorage(content string) error {
+	decoder := xml.NewDecoder(strings.NewReader("<storage>" + content + "</storage>"))
+	decoder.Entity = xml.HTMLEntity
+	depth := 0
+	for {
+		token, err := decoder.Token()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("confluence: storage content must be well-formed XHTML (use plain_text for unformatted text): %w", err)
+		}
+		switch token.(type) {
+		case xml.StartElement:
+			depth++
+		case xml.EndElement:
+			depth--
+		case xml.Directive, xml.ProcInst:
+			return fmt.Errorf("confluence: storage content must not contain XML directives or processing instructions")
+		}
+		if depth == 0 && decoder.InputOffset() != int64(len("<storage>")+len(content)+len("</storage>")) {
+			return fmt.Errorf("confluence: storage content must be an XHTML fragment")
+		}
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -105,6 +106,8 @@ func TestParseAPIError(t *testing.T) {
 	}{
 		{name: "message field", status: 404, body: `{"message": "Page not found"}`, message: "Page not found"},
 		{name: "errors array", status: 403, body: `{"errors": [{"status": 403, "title": "Not permitted"}]}`, message: "Not permitted"},
+		{name: "string status and detail", status: 400, body: `{"errors":[{"status":"400","title":"Invalid body","detail":"Unclosed paragraph"}]}`, message: "Invalid body: Unclosed paragraph"},
+		{name: "detail only", status: 409, body: `{"errors":[{"detail":"Version conflict"}]}`, message: "Version conflict"},
 		{name: "empty body", status: 500, body: ``, message: ""},
 		{name: "unparseable body", status: 502, body: `<html>bad gateway</html>`, message: ""},
 	}
@@ -125,6 +128,49 @@ func TestParseAPIError(t *testing.T) {
 			}
 			if !strings.Contains(apiErr.Error(), "confluence: request failed") {
 				t.Errorf("Error() = %q, want it to describe the failure", apiErr.Error())
+			}
+		})
+	}
+}
+
+func TestClientRequestPaths(t *testing.T) {
+	for _, tt := range []struct{ base, want string }{
+		{"https://example.atlassian.net", "/wiki/api/v2/pages/"},
+		{"https://example.atlassian.net/wiki/", "/wiki/api/v2/pages/"},
+		{"https://api.atlassian.com/ex/confluence/cloud-id/wiki", "/ex/confluence/cloud-id/wiki/api/v2/pages/"},
+		{"https://example.atlassian.net/custom%20prefix", "/custom%20prefix/wiki/api/v2/pages/"},
+	} {
+		t.Run(tt.base, func(t *testing.T) {
+			client, err := NewClient(tt.base, "email", "token", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			id := "a/b %?世界"
+			req, err := client.newRequest(context.Background(), http.MethodGet, "wiki/api/v2/pages/"+url.PathEscape(id), url.Values{"title": {"A & B"}}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, want := req.URL.EscapedPath(), tt.want+url.PathEscape(id); got != want {
+				t.Fatalf("escaped path = %q, want %q", got, want)
+			}
+			if req.URL.Query().Get("title") != "A & B" {
+				t.Fatalf("query corrupted: %s", req.URL.RawQuery)
+			}
+		})
+	}
+}
+
+func TestClientRejectsEmptyJSONResponses(t *testing.T) {
+	for _, body := range []string{"", " \r\n ", "null", "{}"} {
+		t.Run(body, func(t *testing.T) {
+			client := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+				writeJSON(w, body)
+			})
+			if _, err := client.CreatePage(context.Background(), CreatePageInput{SpaceID: "9", Title: "Title"}); err == nil {
+				t.Fatal("empty JSON response incorrectly reported a successful create")
+			}
+			if _, err := client.UpdatePage(context.Background(), "123", UpdatePageInput{Title: new("Title")}); err == nil {
+				t.Fatal("empty JSON response incorrectly reported a successful update")
 			}
 		})
 	}

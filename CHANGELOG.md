@@ -1,5 +1,36 @@
 # Changelog
 
+## [1.2.2]
+
+### Added
+
+- Original `raw_content` and `body_format` on individual page/comment reads,
+  defaulting to storage format, so rich articles can be edited without losing
+  tables, macros, links, or attachment references.
+- Created page versions and MCP instructions for reading, editing, and verifying
+  articles, with guidance for recovering from version conflicts.
+- Article lifecycle regression tests over stdio and streamable HTTP.
+
+### Fixed
+
+- Add page labels through the supported v1 content-label endpoint.
+- Preserve paragraph breaks in plain text with Windows or CR line endings.
+- Validate XHTML syntax, ADF document roots, and required page write fields
+  before sending requests. Reject unsupported title-only version options
+  instead of silently ignoring them; explicit empty content clears the body.
+- Preserve escaped URL path segments and accept base URLs ending in `/wiki`.
+- Reject empty/null JSON responses and retain API error details with string
+  status codes.
+- Encode multipart filenames correctly and validate attachment MIME headers.
+- Keep environment API tokens out of CLI help and report help as a successful
+  exit. Reject unexpected positional arguments.
+
+### Changed
+
+- Mark page and comment body replacement as destructive in MCP annotations.
+- Give default HTTP clients a 30-second timeout and isolate test environment
+  changes using cleanup-aware test helpers.
+
 ## [1.2.1]
 
 ### Added

@@ -8,11 +8,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // Client is a Confluence Cloud REST API v2 client authenticated via Basic auth
@@ -50,7 +52,7 @@ func readLimited(r io.Reader, limit int64) ([]byte, error) {
 
 // NewClient creates a Client for the given Confluence Cloud base URL (e.g.
 // "https://your-domain.atlassian.net"). If httpClient is nil,
-// http.DefaultClient is used.
+// a client with a 30-second timeout is used.
 func NewClient(baseURL, email, token string, httpClient *http.Client) (*Client, error) {
 	u, err := url.Parse(baseURL)
 	if err != nil {
@@ -63,7 +65,14 @@ func NewClient(baseURL, email, token string, httpClient *http.Client) (*Client, 
 		return nil, fmt.Errorf("confluence: base URL must not contain credentials, a query, or a fragment")
 	}
 	if httpClient == nil {
-		httpClient = http.DefaultClient
+		httpClient = &http.Client{Timeout: 30 * time.Second}
+	}
+	// Accept site URLs copied with a trailing /wiki, including API gateway
+	// prefixes, without constructing /wiki/wiki/... request paths.
+	u.RawPath = strings.TrimSuffix(strings.TrimRight(u.EscapedPath(), "/"), "/wiki")
+	u.Path, err = url.PathUnescape(u.RawPath)
+	if err != nil {
+		return nil, fmt.Errorf("confluence: invalid base URL path: %w", err)
 	}
 	return &Client{
 		httpClient: httpClient,
@@ -123,20 +132,32 @@ func (c *Client) doJSON(ctx context.Context, method, path string, query url.Valu
 		return parseAPIError(resp.StatusCode, respBody)
 	}
 
-	if out != nil && len(respBody) > 0 {
-		if err := json.Unmarshal(respBody, out); err != nil {
-			return fmt.Errorf("confluence: decoding response body: %w", err)
-		}
-	}
+	return decodeResponse(respBody, out)
+}
 
+func decodeResponse(body []byte, out any) error {
+	if out == nil {
+		return nil
+	}
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return fmt.Errorf("confluence: expected a JSON response but received an empty body or null; verify the resource before retrying a write")
+	}
+	if err := json.Unmarshal(body, out); err != nil {
+		return fmt.Errorf("confluence: decoding response body: %w", err)
+	}
 	return nil
 }
 
 // newRequest builds an HTTP request with Basic auth.
 func (c *Client) newRequest(ctx context.Context, method, path string, query url.Values, body io.Reader) (*http.Request, error) {
 	u := *c.baseURL
-	u.Path = strings.TrimSuffix(u.Path, "/") + "/" + strings.TrimPrefix(path, "/")
-	u.RawPath = ""
+	u.RawPath = strings.TrimSuffix(u.EscapedPath(), "/") + "/" + strings.TrimPrefix(path, "/")
+	var err error
+	u.Path, err = url.PathUnescape(u.RawPath)
+	if err != nil {
+		return nil, fmt.Errorf("confluence: invalid request path: %w", err)
+	}
 	u.RawQuery = ""
 	u.ForceQuery = false
 	u.Fragment = ""
@@ -158,8 +179,8 @@ func parseAPIError(statusCode int, body []byte) error {
 	var errResp struct {
 		Message string `json:"message"`
 		Errors  []struct {
-			Status int    `json:"status"`
 			Title  string `json:"title"`
+			Detail string `json:"detail"`
 		} `json:"errors"`
 	}
 
@@ -169,7 +190,20 @@ func parseAPIError(statusCode int, body []byte) error {
 				return &APIError{StatusCode: statusCode, Message: errResp.Message}
 			}
 			if len(errResp.Errors) > 0 {
-				return &APIError{StatusCode: statusCode, Message: errResp.Errors[0].Title}
+				var messages []string
+				for _, item := range errResp.Errors {
+					message := item.Title
+					if item.Detail != "" {
+						if message != "" {
+							message += ": "
+						}
+						message += item.Detail
+					}
+					if message != "" {
+						messages = append(messages, message)
+					}
+				}
+				return &APIError{StatusCode: statusCode, Message: strings.Join(messages, "; ")}
 			}
 		}
 	}
@@ -179,11 +213,19 @@ func parseAPIError(statusCode int, body []byte) error {
 
 // doMultipart sends a multipart/form-data request with file data.
 func (c *Client) doMultipart(ctx context.Context, method, path string, query url.Values, filename, mimeType string, data []byte, out any) error {
+	if strings.TrimSpace(filename) == "" || strings.ContainsAny(filename, "\r\n\x00") {
+		return fmt.Errorf("confluence: attachment filename must be non-blank and contain no CR, LF, or NUL characters")
+	}
+	if mimeType != "" {
+		if _, _, err := mime.ParseMediaType(mimeType); err != nil || strings.ContainsAny(mimeType, "\r\n\x00") {
+			return fmt.Errorf("confluence: invalid attachment MIME type %q", mimeType)
+		}
+	}
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
 
 	h := make(textproto.MIMEHeader)
-	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename=%q`, filename))
+	h.Set("Content-Disposition", multipart.FileContentDisposition("file", filename))
 	if mimeType != "" {
 		h.Set("Content-Type", mimeType)
 	}
@@ -221,11 +263,5 @@ func (c *Client) doMultipart(ctx context.Context, method, path string, query url
 		return parseAPIError(resp.StatusCode, respBody)
 	}
 
-	if out != nil && len(respBody) > 0 {
-		if err := json.Unmarshal(respBody, out); err != nil {
-			return fmt.Errorf("confluence: decoding response body: %w", err)
-		}
-	}
-
-	return nil
+	return decodeResponse(respBody, out)
 }

@@ -3,7 +3,9 @@ package mcpserver
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
+	"net/http"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -27,8 +29,9 @@ type CreatePageInput struct {
 
 // CreatedPage describes a newly created page.
 type CreatedPage struct {
-	PageID string `json:"page_id" jsonschema:"the ID of the created page"`
-	Title  string `json:"title,omitempty" jsonschema:"the page title"`
+	PageID  string `json:"page_id" jsonschema:"the ID of the created page"`
+	Title   string `json:"title,omitempty" jsonschema:"the page title"`
+	Version int    `json:"version,omitempty" jsonschema:"the created page version number"`
 }
 
 func createPage(client *confluence.Client) mcp.ToolHandlerFor[CreatePageInput, CreatedPage] {
@@ -43,7 +46,11 @@ func createPage(client *confluence.Client) mcp.ToolHandlerFor[CreatePageInput, C
 		if err != nil {
 			return nil, CreatedPage{}, fmt.Errorf("create page in space %s: %w", in.SpaceID, err)
 		}
-		return nil, CreatedPage{PageID: page.ID, Title: page.Title}, nil
+		out := CreatedPage{PageID: page.ID, Title: page.Title}
+		if page.Version != nil {
+			out.Version = page.Version.Number
+		}
+		return nil, out, nil
 	}
 }
 
@@ -53,7 +60,7 @@ func createPage(client *confluence.Client) mcp.ToolHandlerFor[CreatePageInput, C
 type UpdatePageInput struct {
 	PageID      string  `json:"page_id" jsonschema:"the Confluence page ID to update"`
 	Title       *string `json:"title,omitempty" jsonschema:"new title for the page"`
-	Content     *string `json:"content,omitempty" jsonschema:"new content for the page"`
+	Content     *string `json:"content,omitempty" jsonschema:"complete replacement body; edit raw_content from get_page to preserve existing formatting; an empty string clears the body"`
 	BodyType    string  `json:"body_type,omitempty" jsonschema:"content format: storage (default), atlas_doc_format, or plain_text"`
 	Version     int     `json:"version,omitempty" jsonschema:"the current page version number; required when changing content"`
 	VersionNote string  `json:"version_note,omitempty" jsonschema:"optional version message describing the change"`
@@ -76,6 +83,10 @@ func updatePage(client *confluence.Client) mcp.ToolHandlerFor[UpdatePageInput, U
 			VersionNote: in.VersionNote,
 		})
 		if err != nil {
+			var apiErr *confluence.APIError
+			if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusConflict {
+				return nil, UpdatePageOutput{}, fmt.Errorf("update page %s: version conflict; get the page again and merge your edits into its latest raw_content before retrying with that version: %w", in.PageID, err)
+			}
 			return nil, UpdatePageOutput{}, fmt.Errorf("update page %s: %w", in.PageID, err)
 		}
 		version := 0
@@ -295,14 +306,14 @@ func deleteAttachment(client *confluence.Client) mcp.ToolHandlerFor[DeleteAttach
 func registerWriteTools(s *mcp.Server, client *confluence.Client) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "confluence_create_page",
-		Description: "Create a new Confluence page",
+		Description: "Create and publish a new Confluence page. Use storage for XHTML, atlas_doc_format for an ADF JSON document, or plain_text for unformatted text. Markdown is not supported. Returns the page ID and version; read the page back to verify it.",
 		Annotations: nonDestructiveHint,
 	}, createPage(client))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "confluence_update_page",
-		Description: "Update title and/or content of an existing Confluence page",
-		Annotations: nonDestructiveHint,
+		Description: "Update a published Confluence page. Content replaces the entire body: first get the page, edit raw_content, and supply its current version and matching body_type. Never use the plain text summary to reconstruct rich articles. A title-only rename leaves the body unchanged and does not accept version, version_note, or body_type.",
+		Annotations: destructiveHint,
 	}, updatePage(client))
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -332,7 +343,7 @@ func registerWriteTools(s *mcp.Server, client *confluence.Client) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "confluence_update_footer_comment",
 		Description: "Update the body of a Confluence footer comment",
-		Annotations: nonDestructiveHint,
+		Annotations: destructiveHint,
 	}, updateFooterComment(client))
 
 	mcp.AddTool(s, &mcp.Tool{

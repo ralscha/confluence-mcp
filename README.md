@@ -88,9 +88,72 @@ The default mode is `readonly`. Set `CONFLUENCE_MODE=readwrite` (or
 Page and comment content uses [Confluence storage format](https://confluence.atlassian.com/doc/confluence-storage-format-790796544.html)
 (XHTML) by default, or Atlas Document Format (ADF). For write tools, set
 `body_type` to `plain_text` to have text safely escaped and converted to storage
-format, `storage` for XHTML, or `atlas_doc_format` for ADF JSON. Read tools
-return best-effort plain text; rich formatting such as tables and macros is not
-preserved.
+format, `storage` for XHTML, or `atlas_doc_format` for ADF JSON. Markdown is not a
+supported write format. XHTML syntax and the ADF document root (`type: "doc"`,
+`version: 1`, and a `content` array) are validated before sending a write;
+Confluence validates supported elements, macros, and ADF nodes.
+
+Read tools return a best-effort plain text `content` summary. `confluence_get_page`
+and `confluence_get_comment` also return the original `raw_content` and its
+`body_format`, defaulting to `storage`. Use `raw_content` for editing: the plain
+text summary loses tables, macros, links, and attachment references. `view` is
+rendered HTML for reading and cannot be used as a write format.
+
+### Writing and editing articles
+
+Enable `readwrite` mode, then resolve a space ID with `confluence_get_space` if
+you only have a space key. `confluence_create_page` publishes immediately and
+returns the new page ID and version. For example:
+
+```json
+{
+  "space_id": "123",
+  "title": "Release guide",
+  "parent_id": "456",
+  "body_type": "storage",
+  "content": "<h1>Release guide</h1><p>Check the <strong>release notes</strong>.</p>"
+}
+```
+
+For existing articles:
+
+1. Call `confluence_get_page` with `page_id` and `body_format: "storage"` (or
+   `"atlas_doc_format"` for ADF).
+2. Edit `raw_content`, keeping the surrounding markup and content you intend
+   to retain.
+3. Call `confluence_update_page` with the complete edited body as `content`, the
+   same format as `body_type`, and the **current** `version` returned by the read.
+   The server increments the version for Confluence. Omit `title` to keep it.
+4. Read the page again to verify the saved content and version.
+
+For example, if the read returned version 3:
+
+```json
+{
+  "page_id": "789",
+  "version": 3,
+  "version_note": "Clarify release steps",
+  "body_type": "storage",
+  "content": "<h1>Release guide</h1><p>Review the release notes before publishing.</p>"
+}
+```
+
+Content updates replace the entire body. An explicit empty `content` string
+clears the body; omitting it leaves the body unchanged. A title-only rename
+uses the dedicated title endpoint and accepts just `page_id` and `title`.
+To use `version` or `version_note` when renaming, also supply the unchanged
+`raw_content` and its format in a versioned content update.
+
+On a version conflict, retrieve the latest page, merge your changes, and submit
+that version. The server does not retry writes automatically. If a request times
+out or returns an unusable response, inspect Confluence before retrying: the
+write may already have succeeded.
+
+For plain text, `body_type: "plain_text"` escapes special characters and converts
+blank lines to paragraphs, including Windows CRLF line endings. For rich storage
+content, use Confluence XHTML, including `ac:` macros, `ri:` attachment references,
+and CDATA for code macro bodies. See the [storage format reference](https://confluence.atlassian.com/doc/confluence-storage-format-790796544.html)
+and [page API](https://developer.atlassian.com/cloud/confluence/rest/v2/api-group-page/).
 
 ## Transports
 
@@ -162,7 +225,7 @@ For scoped tokens, grant these Confluence scopes:
 | Mode | Token scopes | Confluence permissions the account still needs |
 | ---- | ------------ | ---------------------------------------------- |
 | `readonly` | `read:page:confluence`, `read:space:confluence`, `read:attachment:confluence`, `read:comment:confluence`, `read:content-details:confluence`, `read:content.metadata:confluence`, `read:hierarchical-content:confluence` | Confluence product access (`Can use`) and view permission for the spaces/pages/comments/attachments to read. Page restrictions still apply. |
-| `readwrite` | All readonly scopes, plus `write:page:confluence`, `write:label:confluence`, `write:attachment:confluence`, `write:comment:confluence`, `delete:page:confluence`, `delete:attachment:confluence`, `delete:comment:confluence` | The readonly permissions, plus only the space permissions required by the write tools you use: add/update/delete pages, add/remove labels, add attachments, add/update/delete comments, and/or delete attachments. |
+| `readwrite` | All readonly scopes, plus `write:page:confluence`, `read:label:confluence`, `write:label:confluence`, `write:attachment:confluence`, `write:comment:confluence`, `delete:page:confluence`, `delete:attachment:confluence`, `delete:comment:confluence` | The readonly permissions, plus only the space permissions required by the write tools you use: add/update/delete pages, add/remove labels, add attachments, add/update/delete comments, and/or delete attachments. |
 
 `confluence-mcp` does not need Confluence admin scopes or space-management
 scopes because it does not create spaces or change space settings.
@@ -194,8 +257,13 @@ Tests cover:
 - Tool handler input mapping, limit clamping, and result summarization
 - Mode-gated tool registration (`readonly` excludes write tools)
 - HTTP transport origin validation
-- End-to-end smoke tests that spawn the real binary and drive it via the
-  official SDK client over both stdio and HTTP transports
+- Article lifecycle tests through the official SDK client over stdio (a server
+  subprocess) and streamable HTTP: creation, exact rich-body readback, updates,
+  renames, version notes, label addition, conflicts, and explicit body clearing
+
+Tests use local Confluence API fixtures; they do not publish to a live tenant.
+The live service may normalize markup or apply tenant-specific macro and editor
+rules, so use the readback step to verify published articles.
 
 ## MCP client configuration
 
@@ -242,7 +310,7 @@ Add to `.vscode/mcp.json` (or your user-level `mcp.json`):
 ## API Coverage
 
 This server primarily uses the [Confluence Cloud REST API v2](https://developer.atlassian.com/cloud/confluence/rest/v2/intro/).
-CQL search, attachment upload/download, and label removal use Confluence REST
+CQL search, attachment upload/download, and label addition/removal use Confluence REST
 API v1 endpoints because those operations are not exposed by v2. The server
 covers a core subset focused on pages, spaces, labels, comments, attachments,
 page history, and CQL search.

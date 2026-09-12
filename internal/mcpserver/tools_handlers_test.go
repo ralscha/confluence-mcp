@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -68,6 +69,40 @@ func TestGetPageHandlerError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "get page 123") {
 		t.Errorf("error = %q, want it to name the page", err)
+	}
+}
+
+func TestIndividualReadsPreserveRawBodies(t *testing.T) {
+	for _, tt := range []struct{ format, content string }{
+		{"storage", "<p><strong>Original</strong> &amp; text</p>"},
+		{"atlas_doc_format", `{"type":"doc","version":1,"content":[{"type":"paragraph"}]}`},
+		{"view", "<div>Rendered</div>"},
+		{"storage", ""},
+	} {
+		t.Run(tt.format+"/"+tt.content, func(t *testing.T) {
+			client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Query().Get("body-format") != tt.format {
+					t.Errorf("body-format = %q, want %q", r.URL.Query().Get("body-format"), tt.format)
+				}
+				if err := json.NewEncoder(w).Encode(map[string]any{
+					"id": "123", "body": map[string]any{tt.format: map[string]string{"value": tt.content}},
+				}); err != nil {
+					t.Error(err)
+				}
+			})
+			requested := tt.format
+			if requested == "storage" {
+				requested = "" // Single-object reads must request storage by default.
+			}
+			_, page, err := getPage(client)(context.Background(), nil, GetPageInput{PageID: "123", BodyFormat: requested})
+			if err != nil || page.RawContent == nil || *page.RawContent != tt.content || page.BodyFormat != tt.format {
+				t.Fatalf("page raw body lost: %+v, %v", page, err)
+			}
+			_, comment, err := getComment(client)(context.Background(), nil, GetCommentInput{CommentID: "123", BodyFormat: requested})
+			if err != nil || comment.RawContent == nil || *comment.RawContent != tt.content || comment.BodyFormat != tt.format {
+				t.Fatalf("comment raw body lost: %+v, %v", comment, err)
+			}
+		})
 	}
 }
 

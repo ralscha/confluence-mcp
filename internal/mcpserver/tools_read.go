@@ -74,14 +74,16 @@ func nextCursor(nextLink string) string {
 
 // PageSummary is a flattened, human-readable view of a Confluence page.
 type PageSummary struct {
-	ID       string `json:"id" jsonschema:"the page ID"`
-	Title    string `json:"title,omitempty" jsonschema:"the page title"`
-	Status   string `json:"status,omitempty" jsonschema:"the page status (current, archived)"`
-	SpaceID  string `json:"space_id,omitempty" jsonschema:"the space ID"`
-	ParentID string `json:"parent_id,omitempty" jsonschema:"the parent page ID, if any"`
-	Version  int    `json:"version,omitempty" jsonschema:"the current version number"`
-	Content  string `json:"content,omitempty" jsonschema:"the page content as plain text"`
-	WebURL   string `json:"web_url,omitempty" jsonschema:"the URL to view the page in a browser"`
+	ID         string  `json:"id" jsonschema:"the page ID"`
+	Title      string  `json:"title,omitempty" jsonschema:"the page title"`
+	Status     string  `json:"status,omitempty" jsonschema:"the page status (current, archived)"`
+	SpaceID    string  `json:"space_id,omitempty" jsonschema:"the space ID"`
+	ParentID   string  `json:"parent_id,omitempty" jsonschema:"the parent page ID, if any"`
+	Version    int     `json:"version,omitempty" jsonschema:"the current version number"`
+	Content    string  `json:"content,omitempty" jsonschema:"the page content as plain text"`
+	RawContent *string `json:"raw_content,omitempty" jsonschema:"original body returned by get_page; edit this to preserve formatting"`
+	BodyFormat string  `json:"body_format,omitempty" jsonschema:"format of raw_content; use storage or atlas_doc_format as body_type when updating"`
+	WebURL     string  `json:"web_url,omitempty" jsonschema:"the URL to view the page in a browser"`
 }
 
 func pageToSummary(page *confluence.Page) PageSummary {
@@ -103,17 +105,56 @@ func pageToSummary(page *confluence.Page) PageSummary {
 // GetPageInput is the input for the confluence_get_page tool.
 type GetPageInput struct {
 	PageID     string `json:"page_id" jsonschema:"the Confluence page ID"`
-	BodyFormat string `json:"body_format,omitempty" jsonschema:"optional body format to include (storage, atlas_doc_format, or view)"`
+	BodyFormat string `json:"body_format,omitempty" jsonschema:"body format: storage (default), atlas_doc_format, or view (rendered HTML; not writable)"`
 }
 
 func getPage(client *confluence.Client) mcp.ToolHandlerFor[GetPageInput, PageSummary] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in GetPageInput) (*mcp.CallToolResult, PageSummary, error) {
+		if in.BodyFormat == "" {
+			in.BodyFormat = "storage"
+		}
+		if err := validateReadBodyFormat(in.BodyFormat); err != nil {
+			return nil, PageSummary{}, err
+		}
 		page, err := client.GetPage(ctx, in.PageID, in.BodyFormat)
 		if err != nil {
 			return nil, PageSummary{}, fmt.Errorf("get page %s: %w", in.PageID, err)
 		}
-		return nil, pageToSummary(page), nil
+		out := pageToSummary(page)
+		out.RawContent = rawBody(page.Body, in.BodyFormat)
+		if out.RawContent != nil {
+			out.BodyFormat = in.BodyFormat
+		}
+		return nil, out, nil
 	}
+}
+
+func validateReadBodyFormat(format string) error {
+	switch format {
+	case "storage", "atlas_doc_format", "view":
+		return nil
+	default:
+		return fmt.Errorf("unsupported body_format %q (want storage, atlas_doc_format, or view)", format)
+	}
+}
+
+func rawBody(body *confluence.PageBody, format string) *string {
+	if body == nil {
+		return nil
+	}
+	var representation *confluence.ContentRepresentation
+	switch format {
+	case "storage":
+		representation = body.Storage
+	case "atlas_doc_format":
+		representation = body.AtlasDocFormat
+	case "view":
+		representation = body.View
+	}
+	if representation == nil {
+		return nil
+	}
+	return &representation.Value
 }
 
 // SearchPagesInput is the input for the confluence_search_pages tool.
@@ -579,20 +620,22 @@ func getPageLabels(client *confluence.Client) mcp.ToolHandlerFor[GetPageLabelsIn
 
 // CommentSummary is a flattened view of a Confluence comment.
 type CommentSummary struct {
-	ID                      string `json:"id" jsonschema:"the comment ID"`
-	Type                    string `json:"type,omitempty" jsonschema:"the comment type: footer or inline"`
-	Status                  string `json:"status,omitempty" jsonschema:"the comment status"`
-	Title                   string `json:"title,omitempty" jsonschema:"the comment title"`
-	PageID                  string `json:"page_id,omitempty" jsonschema:"the page ID the comment belongs to"`
-	ParentCommentID         string `json:"parent_comment_id,omitempty" jsonschema:"the parent comment ID, if this is a reply"`
-	Version                 int    `json:"version,omitempty" jsonschema:"the current comment version number"`
-	CreatedAt               string `json:"created_at,omitempty" jsonschema:"when this comment version was created"`
-	AuthorID                string `json:"author_id,omitempty" jsonschema:"the author account ID"`
-	Content                 string `json:"content,omitempty" jsonschema:"the comment body as plain text"`
-	ResolutionStatus        string `json:"resolution_status,omitempty" jsonschema:"inline comment resolution status"`
-	InlineMarkerRef         string `json:"inline_marker_ref,omitempty" jsonschema:"inline comment marker reference"`
-	InlineOriginalSelection string `json:"inline_original_selection,omitempty" jsonschema:"the originally selected text for an inline comment"`
-	WebURL                  string `json:"web_url,omitempty" jsonschema:"the URL to view the comment in a browser"`
+	ID                      string  `json:"id" jsonschema:"the comment ID"`
+	Type                    string  `json:"type,omitempty" jsonschema:"the comment type: footer or inline"`
+	Status                  string  `json:"status,omitempty" jsonschema:"the comment status"`
+	Title                   string  `json:"title,omitempty" jsonschema:"the comment title"`
+	PageID                  string  `json:"page_id,omitempty" jsonschema:"the page ID the comment belongs to"`
+	ParentCommentID         string  `json:"parent_comment_id,omitempty" jsonschema:"the parent comment ID, if this is a reply"`
+	Version                 int     `json:"version,omitempty" jsonschema:"the current comment version number"`
+	CreatedAt               string  `json:"created_at,omitempty" jsonschema:"when this comment version was created"`
+	AuthorID                string  `json:"author_id,omitempty" jsonschema:"the author account ID"`
+	Content                 string  `json:"content,omitempty" jsonschema:"the comment body as plain text"`
+	RawContent              *string `json:"raw_content,omitempty" jsonschema:"original body returned by get_comment; edit this to preserve formatting"`
+	BodyFormat              string  `json:"body_format,omitempty" jsonschema:"format of raw_content"`
+	ResolutionStatus        string  `json:"resolution_status,omitempty" jsonschema:"inline comment resolution status"`
+	InlineMarkerRef         string  `json:"inline_marker_ref,omitempty" jsonschema:"inline comment marker reference"`
+	InlineOriginalSelection string  `json:"inline_original_selection,omitempty" jsonschema:"the originally selected text for an inline comment"`
+	WebURL                  string  `json:"web_url,omitempty" jsonschema:"the URL to view the comment in a browser"`
 }
 
 func commentToSummary(comment *confluence.Comment, commentType string) CommentSummary {
@@ -679,11 +722,17 @@ func listPageComments(client *confluence.Client) mcp.ToolHandlerFor[ListPageComm
 type GetCommentInput struct {
 	CommentID   string `json:"comment_id" jsonschema:"the Confluence comment ID"`
 	CommentType string `json:"comment_type,omitempty" jsonschema:"comment type: footer (default) or inline"`
-	BodyFormat  string `json:"body_format,omitempty" jsonschema:"optional body format to include (storage, atlas_doc_format, view)"`
+	BodyFormat  string `json:"body_format,omitempty" jsonschema:"body format: storage (default), atlas_doc_format, or view (rendered HTML; not writable)"`
 }
 
 func getComment(client *confluence.Client) mcp.ToolHandlerFor[GetCommentInput, CommentSummary] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in GetCommentInput) (*mcp.CallToolResult, CommentSummary, error) {
+		if in.BodyFormat == "" {
+			in.BodyFormat = "storage"
+		}
+		if err := validateReadBodyFormat(in.BodyFormat); err != nil {
+			return nil, CommentSummary{}, err
+		}
 		commentType := in.CommentType
 		if commentType == "" {
 			commentType = confluence.CommentTypeFooter
@@ -697,7 +746,12 @@ func getComment(client *confluence.Client) mcp.ToolHandlerFor[GetCommentInput, C
 		if err != nil {
 			return nil, CommentSummary{}, fmt.Errorf("get %s comment %s: %w", commentType, in.CommentID, err)
 		}
-		return nil, commentToSummary(comment, commentType), nil
+		out := commentToSummary(comment, commentType)
+		out.RawContent = rawBody(comment.Body, in.BodyFormat)
+		if out.RawContent != nil {
+			out.BodyFormat = in.BodyFormat
+		}
+		return nil, out, nil
 	}
 }
 
@@ -869,7 +923,7 @@ func downloadAttachment(client *confluence.Client) mcp.ToolHandlerFor[DownloadAt
 func registerReadTools(s *mcp.Server, client *confluence.Client) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "confluence_get_page",
-		Description: "Get a single Confluence page by ID",
+		Description: "Get a Confluence page with its current version, readable text, and original raw_content for editing. Defaults to storage format. Preserve raw_content when updating rich articles.",
 		Annotations: readOnlyHint,
 	}, getPage(client))
 

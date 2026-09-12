@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"strings"
 )
 
 // GetPage fetches a single page by ID. If bodyFormat is non-empty, the page
@@ -76,27 +77,30 @@ type CreatePageInput struct {
 
 // CreatePage creates a new page and returns the created page.
 func (c *Client) CreatePage(ctx context.Context, in CreatePageInput) (*Page, error) {
+	if strings.TrimSpace(in.SpaceID) == "" || strings.TrimSpace(in.Title) == "" {
+		return nil, fmt.Errorf("confluence: CreatePage requires a space ID and a non-blank title")
+	}
+	pageBody, err := bodyForWrite(in.Body, in.BodyType)
+	if err != nil {
+		return nil, err
+	}
 	body := map[string]any{
 		"spaceId": in.SpaceID,
 		"status":  "current",
 		"title":   in.Title,
+		"body":    pageBody,
 	}
 
 	if in.ParentID != "" {
 		body["parentId"] = in.ParentID
 	}
 
-	if in.Body != "" {
-		pageBody, err := bodyForWrite(in.Body, in.BodyType)
-		if err != nil {
-			return nil, err
-		}
-		body["body"] = pageBody
-	}
-
 	var created Page
 	if err := c.doJSON(ctx, "POST", "wiki/api/v2/pages", nil, body, &created); err != nil {
 		return nil, err
+	}
+	if created.ID == "" {
+		return nil, fmt.Errorf("confluence: create response has no page ID; verify whether the page was created before retrying")
 	}
 	return &created, nil
 }
@@ -114,19 +118,35 @@ type UpdatePageInput struct {
 // current version number; Confluence expects the request to contain the next
 // version number, so it is incremented here.
 func (c *Client) UpdatePage(ctx context.Context, pageID string, in UpdatePageInput) (*Page, error) {
+	if strings.TrimSpace(pageID) == "" {
+		return nil, fmt.Errorf("confluence: UpdatePage requires a page ID")
+	}
+	if in.Title != nil && strings.TrimSpace(*in.Title) == "" {
+		return nil, fmt.Errorf("confluence: page title must not be blank")
+	}
 	if in.Title == nil && in.Body == nil {
 		return nil, fmt.Errorf("confluence: UpdatePage requires at least title or body to update")
 	}
 	if in.Body == nil {
+		if in.Version != 0 || in.VersionNote != "" || in.BodyType != "" {
+			return nil, fmt.Errorf("confluence: title-only updates do not support version, version_note, or body_type; provide content for a versioned update")
+		}
 		var updated Page
 		body := map[string]any{"status": "current", "title": *in.Title}
 		if err := c.doJSON(ctx, "PUT", "wiki/api/v2/pages/"+url.PathEscape(pageID)+"/title", nil, body, &updated); err != nil {
 			return nil, err
 		}
+		if updated.ID != pageID {
+			return nil, fmt.Errorf("confluence: update response has a missing or unexpected page ID; read the page before retrying")
+		}
 		return &updated, nil
 	}
-	if in.Version < 1 {
+	if in.Version < 1 || in.Version == int(^uint(0)>>1) {
 		return nil, fmt.Errorf("confluence: UpdatePage requires the current version number when updating content")
+	}
+	pageBody, err := bodyForWrite(*in.Body, in.BodyType)
+	if err != nil {
+		return nil, err
 	}
 
 	title := in.Title
@@ -138,10 +158,6 @@ func (c *Client) UpdatePage(ctx context.Context, pageID string, in UpdatePageInp
 		title = &current.Title
 	}
 
-	pageBody, err := bodyForWrite(*in.Body, in.BodyType)
-	if err != nil {
-		return nil, err
-	}
 	version := map[string]any{"number": in.Version + 1}
 	if in.VersionNote != "" {
 		version["message"] = in.VersionNote
@@ -157,6 +173,9 @@ func (c *Client) UpdatePage(ctx context.Context, pageID string, in UpdatePageInp
 	var updated Page
 	if err := c.doJSON(ctx, "PUT", "wiki/api/v2/pages/"+url.PathEscape(pageID), nil, body, &updated); err != nil {
 		return nil, err
+	}
+	if updated.ID != pageID {
+		return nil, fmt.Errorf("confluence: update response has a missing or unexpected page ID; read the page before retrying")
 	}
 	return &updated, nil
 }
@@ -320,7 +339,7 @@ func (c *Client) AddPageLabel(ctx context.Context, pageID, labelName string) err
 			"name":   labelName,
 		},
 	}
-	return c.doJSON(ctx, "POST", "wiki/api/v2/pages/"+url.PathEscape(pageID)+"/labels", nil, body, nil)
+	return c.doJSON(ctx, "POST", "wiki/rest/api/content/"+url.PathEscape(pageID)+"/label", nil, body, nil)
 }
 
 // RemovePageLabel removes a label from a page. Label removal is only exposed

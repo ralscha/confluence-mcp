@@ -2,16 +2,71 @@ package config
 
 import (
 	"errors"
+	"flag"
+	"io"
 	"os"
 	"strings"
 	"testing"
 )
 
+func clearConfigEnv(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{"CONFLUENCE_BASE_URL", "CONFLUENCE_EMAIL", "CONFLUENCE_API_TOKEN", "CONFLUENCE_MODE", "MCP_TRANSPORT", "MCP_HTTP_ADDR", "MCP_ALLOWED_ORIGINS"} {
+		t.Setenv(name, "")
+	}
+}
+
+func TestLoadHelpDoesNotLeakToken(t *testing.T) {
+	clearConfigEnv(t)
+	const secret = "secret-must-never-appear-in-usage"
+	t.Setenv("CONFLUENCE_API_TOKEN", secret)
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := os.Stderr
+	os.Stderr = writer
+	t.Cleanup(func() {
+		os.Stderr = previous
+		_ = reader.Close()
+		_ = writer.Close()
+	})
+	_, err = Load([]string{"--help"})
+	if !errors.Is(err, flag.ErrHelp) {
+		t.Fatalf("help error = %v", err)
+	}
+	_ = writer.Close()
+	output, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(output), secret) {
+		t.Fatal("help exposed the API token")
+	}
+}
+
+func TestLoadTokenFlagPrecedence(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("CONFLUENCE_BASE_URL", "https://test.atlassian.net")
+	t.Setenv("CONFLUENCE_EMAIL", "test@example.com")
+	t.Setenv("CONFLUENCE_API_TOKEN", "environment-token")
+	cfg, err := Load([]string{"--confluence-api-token=flag-token"})
+	if err != nil || cfg.ConfluenceAPIToken != "flag-token" {
+		t.Fatalf("flag token override failed: %v", err)
+	}
+	if _, err := Load([]string{"--confluence-api-token="}); err == nil {
+		t.Fatal("explicit empty token flag must override the environment and fail validation")
+	}
+	if _, err := Load([]string{"unexpected-argument"}); err == nil {
+		t.Fatal("positional argument silently ignored")
+	}
+}
+
 func TestLoad_ValidConfig(t *testing.T) {
-	os.Clearenv()
-	_ = os.Setenv("CONFLUENCE_BASE_URL", "https://test.atlassian.net")
-	_ = os.Setenv("CONFLUENCE_EMAIL", "test@example.com")
-	_ = os.Setenv("CONFLUENCE_API_TOKEN", "test-token")
+	clearConfigEnv(t)
+	t.Setenv("CONFLUENCE_BASE_URL", "https://test.atlassian.net")
+	t.Setenv("CONFLUENCE_EMAIL", "test@example.com")
+	t.Setenv("CONFLUENCE_API_TOKEN", "test-token")
 
 	cfg, err := Load([]string{})
 	if err != nil {
@@ -33,7 +88,7 @@ func TestLoad_ValidConfig(t *testing.T) {
 }
 
 func TestLoad_MissingRequired(t *testing.T) {
-	os.Clearenv()
+	clearConfigEnv(t)
 
 	_, err := Load([]string{})
 	if err == nil {
@@ -47,7 +102,7 @@ func TestLoad_MissingRequired(t *testing.T) {
 }
 
 func TestLoad_FlagOverride(t *testing.T) {
-	os.Clearenv()
+	clearConfigEnv(t)
 
 	cfg, err := Load([]string{
 		"--confluence-base-url=https://override.atlassian.net",
@@ -71,7 +126,7 @@ func TestLoad_FlagOverride(t *testing.T) {
 }
 
 func TestLoad_InvalidMode(t *testing.T) {
-	os.Clearenv()
+	clearConfigEnv(t)
 
 	_, err := Load([]string{
 		"--confluence-base-url=https://test.atlassian.net",
@@ -85,7 +140,7 @@ func TestLoad_InvalidMode(t *testing.T) {
 }
 
 func TestLoad_InvalidBaseURL(t *testing.T) {
-	os.Clearenv()
+	clearConfigEnv(t)
 
 	_, err := Load([]string{
 		"--confluence-base-url=not-a-url",
@@ -98,7 +153,7 @@ func TestLoad_InvalidBaseURL(t *testing.T) {
 }
 
 func TestLoad_InsecureBaseURL(t *testing.T) {
-	os.Clearenv()
+	clearConfigEnv(t)
 
 	_, err := Load([]string{
 		"--confluence-base-url=http://test.atlassian.net",
@@ -111,7 +166,7 @@ func TestLoad_InsecureBaseURL(t *testing.T) {
 }
 
 func TestLoad_RejectsBaseURLQuery(t *testing.T) {
-	os.Clearenv()
+	clearConfigEnv(t)
 
 	_, err := Load([]string{
 		"--confluence-base-url=https://test.atlassian.net?tenant=other",
@@ -124,7 +179,7 @@ func TestLoad_RejectsBaseURLQuery(t *testing.T) {
 }
 
 func TestLoad_VersionRequested(t *testing.T) {
-	os.Clearenv()
+	clearConfigEnv(t)
 
 	_, err := Load([]string{"--version"})
 	if !errors.Is(err, ErrVersionRequested) {
@@ -133,8 +188,8 @@ func TestLoad_VersionRequested(t *testing.T) {
 }
 
 func TestLoad_AllowedOrigins(t *testing.T) {
-	os.Clearenv()
-	_ = os.Setenv("MCP_ALLOWED_ORIGINS", "https://a.example.com, ,https://b.example.com")
+	clearConfigEnv(t)
+	t.Setenv("MCP_ALLOWED_ORIGINS", "https://a.example.com, ,https://b.example.com")
 
 	cfg, err := Load([]string{
 		"--confluence-base-url=https://test.atlassian.net",
@@ -158,7 +213,7 @@ func TestLoad_AllowedOrigins(t *testing.T) {
 }
 
 func TestLoad_InvalidAllowedOrigin(t *testing.T) {
-	os.Clearenv()
+	clearConfigEnv(t)
 
 	_, err := Load([]string{
 		"--confluence-base-url=https://test.atlassian.net",
@@ -176,7 +231,7 @@ func TestLoad_InvalidAllowedOrigin(t *testing.T) {
 }
 
 func TestLoad_RejectsNonOriginURL(t *testing.T) {
-	os.Clearenv()
+	clearConfigEnv(t)
 
 	_, err := Load([]string{
 		"--confluence-base-url=https://test.atlassian.net",
@@ -191,7 +246,7 @@ func TestLoad_RejectsNonOriginURL(t *testing.T) {
 }
 
 func TestLoad_InvalidHTTPAddr(t *testing.T) {
-	os.Clearenv()
+	clearConfigEnv(t)
 
 	_, err := Load([]string{
 		"--confluence-base-url=https://test.atlassian.net",

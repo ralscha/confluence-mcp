@@ -7,8 +7,25 @@ import (
 	"testing"
 )
 
+func resetRunConfig(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{"CONFLUENCE_BASE_URL", "CONFLUENCE_EMAIL", "CONFLUENCE_API_TOKEN", "CONFLUENCE_MODE", "MCP_TRANSPORT", "MCP_HTTP_ADDR", "MCP_ALLOWED_ORIGINS"} {
+		t.Setenv(name, "")
+	}
+	args := os.Args
+	t.Cleanup(func() { os.Args = args })
+}
+
+func TestRun_Help(t *testing.T) {
+	resetRunConfig(t)
+	os.Args = []string{"confluence-mcp", "--help"}
+	if err := run(); err != nil {
+		t.Fatalf("help failed: %v", err)
+	}
+}
+
 func TestRun_MissingConfig(t *testing.T) {
-	os.Clearenv()
+	resetRunConfig(t)
 	os.Args = []string{"confluence-mcp"}
 	if err := run(); err == nil {
 		t.Fatal("expected error with missing config, got nil")
@@ -16,7 +33,7 @@ func TestRun_MissingConfig(t *testing.T) {
 }
 
 func TestRun_Version(t *testing.T) {
-	os.Clearenv()
+	resetRunConfig(t)
 	os.Args = []string{"confluence-mcp", "--version"}
 	if err := run(); err != nil {
 		t.Fatalf("run with --version failed: %v", err)

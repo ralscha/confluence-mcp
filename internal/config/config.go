@@ -89,7 +89,9 @@ func Load(args []string) (*Config, error) {
 	fs := flag.NewFlagSet("confluence-mcp", flag.ContinueOnError)
 	baseURL := fs.String("confluence-base-url", cfg.ConfluenceBaseURL, "Confluence Cloud base URL, e.g. https://your-domain.atlassian.net")
 	email := fs.String("confluence-email", cfg.ConfluenceEmail, "Confluence account email used for API token authentication")
-	token := fs.String("confluence-api-token", cfg.ConfluenceAPIToken, "Confluence API token")
+	// Do not use the environment token as the flag default: flag usage prints
+	// defaults, which would expose the credential on --help or parse errors.
+	token := fs.String("confluence-api-token", "", "Confluence API token (defaults to CONFLUENCE_API_TOKEN)")
 	mode := fs.String("mode", string(cfg.Mode), "Server mode: readonly or readwrite")
 	transport := fs.String("transport", string(cfg.Transport), "Transport: stdio or http")
 	httpAddr := fs.String("http-addr", cfg.HTTPAddr, "Address to listen on when --transport=http")
@@ -103,10 +105,17 @@ func Load(args []string) (*Config, error) {
 	if *showVersion {
 		return nil, ErrVersionRequested
 	}
+	if fs.NArg() != 0 {
+		return nil, fmt.Errorf("unexpected positional arguments; use --help to list supported flags")
+	}
 
 	cfg.ConfluenceBaseURL = *baseURL
 	cfg.ConfluenceEmail = *email
-	cfg.ConfluenceAPIToken = *token
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "confluence-api-token" {
+			cfg.ConfluenceAPIToken = *token
+		}
+	})
 	cfg.Mode = Mode(*mode)
 	cfg.Transport = Transport(*transport)
 	cfg.HTTPAddr = *httpAddr

@@ -321,7 +321,7 @@ func TestClient_AddPageLabel(t *testing.T) {
 		if got, want := r.Method, http.MethodPost; got != want {
 			t.Errorf("method = %q, want %q", got, want)
 		}
-		if got, want := r.URL.Path, "/wiki/api/v2/pages/123/labels"; got != want {
+		if got, want := r.URL.Path, "/wiki/rest/api/content/123/label"; got != want {
 			t.Errorf("path = %q, want %q", got, want)
 		}
 		decodeJSONBody(t, r, &gotBody)

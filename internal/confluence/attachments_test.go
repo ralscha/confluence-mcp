@@ -118,6 +118,51 @@ func TestClient_UploadAttachmentNoResults(t *testing.T) {
 	}
 }
 
+func TestAttachmentFilenamesRoundTrip(t *testing.T) {
+	for _, filename := range []string{`diagram "draft".png`, "Résumé 世界 👋.txt"} {
+		t.Run(filename, func(t *testing.T) {
+			client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				reader, err := r.MultipartReader()
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				part, err := reader.NextPart()
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				if part.FileName() != filename || part.FormName() != "file" {
+					t.Errorf("filename = %q; form name = %q", part.FileName(), part.FormName())
+				}
+				if strings.Contains(part.Header.Get("Content-Disposition"), "filename*=") {
+					t.Error("multipart/form-data must use filename, not the RFC 5987 filename* encoding")
+				}
+				writeJSON(w, `{"results":[{"id":"att1"}]}`)
+			})
+			if _, err := client.UploadAttachment(context.Background(), "123", filename, "text/plain", []byte("hello")); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestAttachmentRejectsInvalidHeaders(t *testing.T) {
+	client := newTestClient(t, func(http.ResponseWriter, *http.Request) {
+		t.Error("invalid attachment headers reached Confluence")
+	})
+	for _, tt := range []struct{ filename, mimeType string }{
+		{"", "text/plain"},
+		{"bad\r\nname", "text/plain"},
+		{"file.txt", "text/plain\r\nInjected: yes"},
+		{"file.txt", "invalid MIME type"},
+	} {
+		if _, err := client.UploadAttachment(context.Background(), "123", tt.filename, tt.mimeType, []byte("hello")); err == nil {
+			t.Errorf("invalid headers accepted: %+v", tt)
+		}
+	}
+}
+
 func TestClient_DownloadAttachment(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

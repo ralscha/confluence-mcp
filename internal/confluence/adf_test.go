@@ -114,3 +114,55 @@ func TestBodyForWrite(t *testing.T) {
 		t.Fatal("expected unsupported body type to fail")
 	}
 }
+
+func TestBodyForWritePreservesArticleContent(t *testing.T) {
+	macro := `<h1>Guide</h1><table><tbody><tr><td>A&nbsp;&amp; B</td></tr></tbody></table><ac:structured-macro ac:name="code"><ac:plain-text-body><![CDATA[if (x < 3) { print("<&>"); }]]></ac:plain-text-body></ac:structured-macro><ac:image><ri:attachment ri:filename="diagram.png" /></ac:image>`
+	adf := `{"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"text","text":"Grüezi 世界 👋","marks":[{"type":"strong"}]}]}]}`
+	for _, tt := range []struct {
+		name, content, format, representation, want string
+	}{
+		{"rich storage", macro, "storage", "storage", macro},
+		{"ADF", adf, "atlas_doc_format", "atlas_doc_format", adf},
+		{"Windows paragraphs", "First\r\nline\r\n\r\nSecond & <third>", "plain_text", "storage", "<p>First<br/>line</p><p>Second &amp; &lt;third&gt;</p>"},
+		{"CR paragraphs", "First\r\rSecond", "plain_text", "storage", "<p>First</p><p>Second</p>"},
+		{"clear storage", "", "storage", "storage", "<p></p>"},
+		{"clear plain text", "", "plain_text", "storage", "<p></p>"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := bodyForWrite(tt.content, tt.format)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Value != tt.want || got.Representation != tt.representation {
+				t.Fatalf("body = %+v, want %s %q", got, tt.representation, tt.want)
+			}
+		})
+	}
+}
+
+func TestBodyForWriteRejectsMalformedArticles(t *testing.T) {
+	for _, tt := range []struct{ format, content string }{
+		{"storage", "<p>unclosed"},
+		{"storage", "<p>A & B</p>"},
+		{"storage", "<p><strong>mismatch</p></strong>"},
+		{"storage", "</storage><p>escaped wrapper</p><storage>"},
+		{"storage", `<!DOCTYPE p SYSTEM "file:///etc/passwd"><p>text</p>`},
+		{"storage", "<p>invalid\x00</p>"},
+		{"plain_text", "invalid\x00"},
+		{"atlas_doc_format", "null"},
+		{"atlas_doc_format", `"text"`},
+		{"atlas_doc_format", "[]"},
+		{"atlas_doc_format", "{}"},
+		{"atlas_doc_format", `{"type":"doc","version":2,"content":[]}`},
+		{"atlas_doc_format", `{"type":"paragraph","version":1,"content":[]}`},
+		{"atlas_doc_format", `{"type":"doc","version":1,"content":null}`},
+		{"atlas_doc_format", `{"type":"doc","version":1}`},
+		{"markdown", "# Heading"},
+	} {
+		t.Run(tt.format+"/"+tt.content, func(t *testing.T) {
+			if _, err := bodyForWrite(tt.content, tt.format); err == nil {
+				t.Fatal("malformed article accepted")
+			}
+		})
+	}
+}

@@ -150,7 +150,7 @@ type UpdateFooterCommentInput struct {
 
 // UpdateFooterComment updates the body of an existing footer comment.
 func (c *Client) UpdateFooterComment(ctx context.Context, commentID string, in UpdateFooterCommentInput) (*Comment, error) {
-	if in.Version < 1 {
+	if in.Version < 1 || in.Version == int(^uint(0)>>1) {
 		return nil, fmt.Errorf("confluence: UpdateFooterComment requires the current version number")
 	}
 	commentBody, err := bodyForWrite(in.Body, in.BodyType)
