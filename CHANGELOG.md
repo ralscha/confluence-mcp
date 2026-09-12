@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## [1.2.1]
 
 ### Added
 
@@ -26,6 +26,12 @@
 
 - Mark destructive tools explicitly for MCP hosts and document API-specific
   result limits.
+
+## [1.2.0]
+
+### Changed
+
+- Run the streamable HTTP transport in stateless mode.
 
 ## [1.1.0]
 
